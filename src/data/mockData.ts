@@ -3,22 +3,22 @@ import { User, Project, Finding, KnowledgeBaseItem, Notification } from '@/types
 export const users: User[] = [
   {
     id: '1',
-    username: 'robertadmin',
+    username: 'admin',
     email: 'admin@technieum.io',
     role: 'admin',
     createdAt: new Date('2024-01-01'),
   },
   {
     id: '2',
-    username: 'manager1',
+    username: 'robert_manager',
     email: 'manager@technieum.io',
     role: 'manager',
     createdAt: new Date('2024-01-15'),
   },
   {
     id: '3',
-    username: 'robertaaron',
-    email: 'robert.aaron@technieum.io',
+    username: 'robert_tester',
+    email: 'robert.tester@technieum.io',
     role: 'tester',
     createdAt: new Date('2024-02-01'),
   },
