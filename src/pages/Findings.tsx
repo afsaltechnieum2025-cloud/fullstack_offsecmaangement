@@ -4,9 +4,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { findings, projects, users } from '@/data/mockData';
+import { findings as initialFindings, projects, users } from '@/data/mockData';
 import { useAuth } from '@/contexts/AuthContext';
-import { Severity } from '@/types';
+import { Severity, Finding } from '@/types';
 import {
   Search,
   Plus,
@@ -14,6 +14,7 @@ import {
   ChevronDown,
   ChevronUp,
   AlertTriangle,
+  X,
 } from 'lucide-react';
 import {
   Select,
@@ -28,9 +29,11 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogClose,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { toast } from 'sonner';
 
 export default function Findings() {
   const { user } = useAuth();
@@ -38,12 +41,27 @@ export default function Findings() {
   const [severityFilter, setSeverityFilter] = useState<string>('all');
   const [projectFilter, setProjectFilter] = useState<string>('all');
   const [expandedFinding, setExpandedFinding] = useState<string | null>(null);
+  const [findingsList, setFindingsList] = useState<Finding[]>(initialFindings);
+  const [dialogOpen, setDialogOpen] = useState(false);
+
+  // Form state
+  const [formData, setFormData] = useState({
+    projectId: '',
+    severity: '' as Severity | '',
+    title: '',
+    description: '',
+    stepsToReproduce: '',
+    impact: '',
+    remediation: '',
+    affectedAssets: '',
+    cvssScore: '',
+  });
 
   const userProjects = user?.role === 'tester'
     ? projects.filter(p => p.assignedTesters.includes(user.id))
     : projects;
 
-  const userFindings = findings.filter(f => 
+  const userFindings = findingsList.filter(f => 
     userProjects.some(p => p.id === f.projectId)
   );
 
@@ -69,6 +87,51 @@ export default function Findings() {
       info: 'text-blue-500',
     };
     return <AlertTriangle className={`h-5 w-5 ${colors[severity]}`} />;
+  };
+
+  const resetForm = () => {
+    setFormData({
+      projectId: '',
+      severity: '',
+      title: '',
+      description: '',
+      stepsToReproduce: '',
+      impact: '',
+      remediation: '',
+      affectedAssets: '',
+      cvssScore: '',
+    });
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!formData.projectId || !formData.severity || !formData.title || !formData.description) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+
+    const newFinding: Finding = {
+      id: `TECH-${String(findingsList.length + 1).padStart(3, '0')}`,
+      projectId: formData.projectId,
+      title: formData.title,
+      description: formData.description,
+      severity: formData.severity as Severity,
+      status: 'open',
+      stepsToReproduce: formData.stepsToReproduce,
+      impact: formData.impact,
+      remediation: formData.remediation,
+      affectedAssets: formData.affectedAssets.split(',').map(a => a.trim()).filter(a => a),
+      cvssScore: formData.cvssScore ? parseFloat(formData.cvssScore) : undefined,
+      reportedBy: user?.id || '3',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    setFindingsList([newFinding, ...findingsList]);
+    toast.success('Finding added successfully!');
+    resetForm();
+    setDialogOpen(false);
   };
 
   return (
@@ -116,7 +179,7 @@ export default function Findings() {
               </SelectContent>
             </Select>
           )}
-          <Dialog>
+          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
               <Button variant="gradient">
                 <Plus className="h-4 w-4 mr-2" />
@@ -127,11 +190,14 @@ export default function Findings() {
               <DialogHeader>
                 <DialogTitle>Add New Finding</DialogTitle>
               </DialogHeader>
-              <form className="space-y-4 mt-4">
+              <form onSubmit={handleSubmit} className="space-y-4 mt-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>Project</Label>
-                    <Select>
+                    <Label>Project *</Label>
+                    <Select 
+                      value={formData.projectId} 
+                      onValueChange={(value) => setFormData({ ...formData, projectId: value })}
+                    >
                       <SelectTrigger>
                         <SelectValue placeholder="Select project" />
                       </SelectTrigger>
@@ -143,8 +209,11 @@ export default function Findings() {
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label>Severity</Label>
-                    <Select>
+                    <Label>Severity *</Label>
+                    <Select 
+                      value={formData.severity} 
+                      onValueChange={(value) => setFormData({ ...formData, severity: value as Severity })}
+                    >
                       <SelectTrigger>
                         <SelectValue placeholder="Select severity" />
                       </SelectTrigger>
@@ -158,28 +227,76 @@ export default function Findings() {
                     </Select>
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>Title</Label>
-                  <Input placeholder="Finding title" />
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Title *</Label>
+                    <Input 
+                      placeholder="Finding title" 
+                      value={formData.title}
+                      onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>CVSS Score</Label>
+                    <Input 
+                      placeholder="e.g., 9.8" 
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="10"
+                      value={formData.cvssScore}
+                      onChange={(e) => setFormData({ ...formData, cvssScore: e.target.value })}
+                    />
+                  </div>
                 </div>
                 <div className="space-y-2">
-                  <Label>Description</Label>
-                  <Textarea placeholder="Detailed description of the vulnerability" rows={3} />
+                  <Label>Description *</Label>
+                  <Textarea 
+                    placeholder="Detailed description of the vulnerability" 
+                    rows={3}
+                    value={formData.description}
+                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Affected Assets (comma-separated)</Label>
+                  <Input 
+                    placeholder="e.g., /api/users, /api/admin" 
+                    value={formData.affectedAssets}
+                    onChange={(e) => setFormData({ ...formData, affectedAssets: e.target.value })}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>Steps to Reproduce</Label>
-                  <Textarea placeholder="Step-by-step instructions to reproduce" rows={4} />
+                  <Textarea 
+                    placeholder="Step-by-step instructions to reproduce" 
+                    rows={4}
+                    value={formData.stepsToReproduce}
+                    onChange={(e) => setFormData({ ...formData, stepsToReproduce: e.target.value })}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>Impact</Label>
-                  <Textarea placeholder="Potential impact of this vulnerability" rows={2} />
+                  <Textarea 
+                    placeholder="Potential impact of this vulnerability" 
+                    rows={2}
+                    value={formData.impact}
+                    onChange={(e) => setFormData({ ...formData, impact: e.target.value })}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>Remediation</Label>
-                  <Textarea placeholder="Recommended remediation steps" rows={3} />
+                  <Textarea 
+                    placeholder="Recommended remediation steps" 
+                    rows={3}
+                    value={formData.remediation}
+                    onChange={(e) => setFormData({ ...formData, remediation: e.target.value })}
+                  />
                 </div>
                 <div className="flex justify-end gap-3">
-                  <Button type="button" variant="outline">Cancel</Button>
+                  <DialogClose asChild>
+                    <Button type="button" variant="outline" onClick={resetForm}>Cancel</Button>
+                  </DialogClose>
                   <Button type="submit" variant="gradient">Submit Finding</Button>
                 </div>
               </form>
