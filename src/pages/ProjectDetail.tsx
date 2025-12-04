@@ -1,31 +1,262 @@
 import { useParams, Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { projects, users, findings as allFindings } from '@/data/mockData';
 import { useAuth } from '@/contexts/AuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
+import { supabase } from '@/integrations/supabase/client';
 import {
   ArrowLeft,
   Globe,
   Server,
   Calendar,
-  Users as UsersIcon,
-  Key,
   Bug,
   FileText,
   Download,
   Plus,
+  Loader2,
 } from 'lucide-react';
-import { Severity } from '@/types';
 import { generateTechnicalReport, generateManagementReport } from '@/utils/reportGenerator';
+
+type Project = {
+  id: string;
+  name: string;
+  client: string;
+  domain: string | null;
+  ip_addresses: string[] | null;
+  status: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  created_at: string;
+};
+
+type Finding = {
+  id: string;
+  title: string;
+  description: string | null;
+  severity: string;
+  cvss_score: number | null;
+  status: string | null;
+  created_at: string;
+  created_by: string;
+  steps_to_reproduce: string | null;
+  impact: string | null;
+  remediation: string | null;
+  affected_component: string | null;
+};
+
+type Profile = {
+  user_id: string;
+  username: string;
+};
 
 export default function ProjectDetail() {
   const { id } = useParams();
-  const { user } = useAuth();
-  const project = projects.find(p => p.id === id);
+  const { role, user } = useAuth();
+  const [project, setProject] = useState<Project | null>(null);
+  const [findings, setFindings] = useState<Finding[]>([]);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [assignees, setAssignees] = useState<Profile[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    if (id) {
+      fetchProjectData();
+    }
+  }, [id, user]);
+
+  const fetchProjectData = async () => {
+    if (!user) return;
+    
+    setIsLoading(true);
+    try {
+      // Fetch project
+      const { data: projectData, error: projectError } = await supabase
+        .from('projects')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+
+      if (projectError) throw projectError;
+      setProject(projectData);
+
+      if (projectData) {
+        // Fetch findings for this project
+        const { data: findingsData, error: findingsError } = await supabase
+          .from('findings')
+          .select('*')
+          .eq('project_id', id)
+          .order('severity', { ascending: true });
+
+        if (findingsError) throw findingsError;
+        setFindings(findingsData || []);
+
+        // Fetch profiles
+        const { data: profilesData } = await supabase
+          .from('profiles')
+          .select('user_id, username');
+        setProfiles(profilesData || []);
+
+        // Fetch project assignees
+        const { data: assignmentsData } = await supabase
+          .from('project_assignments')
+          .select('user_id')
+          .eq('project_id', id);
+
+        if (assignmentsData && profilesData) {
+          const assignedProfiles = profilesData.filter(p => 
+            assignmentsData.some(a => a.user_id === p.user_id)
+          );
+          setAssignees(assignedProfiles);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching project:', error);
+      toast.error('Failed to load project data');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const getUsername = (userId: string) => {
+    return profiles.find(p => p.user_id === userId)?.username || 'Unknown';
+  };
+
+  const formatDate = (dateStr: string | null) => {
+    if (!dateStr) return 'Not set';
+    return new Date(dateStr).toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  };
+
+  const getSeverityBadge = (severity: string) => {
+    const variant = severity.toLowerCase() as 'critical' | 'high' | 'medium' | 'low';
+    return <Badge variant={variant}>{severity}</Badge>;
+  };
+
+  const handleGenerateTechnicalReport = async () => {
+    if (!project) return;
+    try {
+      // Transform data for report generator
+      const reportProject = {
+        id: project.id,
+        name: project.name,
+        description: '',
+        client: project.client,
+        targetDomain: project.domain || '',
+        targetIPs: project.ip_addresses || [],
+        credentials: [],
+        assignedTesters: [],
+        managerId: '',
+        status: (project.status || 'active') as 'active' | 'completed' | 'pending' | 'overdue',
+        startDate: project.start_date ? new Date(project.start_date) : new Date(),
+        endDate: project.end_date ? new Date(project.end_date) : new Date(),
+        createdAt: new Date(project.created_at),
+        findings: [],
+      };
+      
+      const reportFindings = findings.map(f => {
+        const severityMap: Record<string, 'critical' | 'high' | 'medium' | 'low' | 'info'> = {
+          'critical': 'critical',
+          'high': 'high',
+          'medium': 'medium',
+          'low': 'low',
+          'informational': 'info',
+        };
+        return {
+          id: f.id,
+          projectId: project.id,
+          title: f.title,
+          description: f.description || '',
+          severity: severityMap[f.severity.toLowerCase()] || 'medium',
+          cvssScore: f.cvss_score || 0,
+          stepsToReproduce: f.steps_to_reproduce || '',
+          impact: f.impact || '',
+          remediation: f.remediation || '',
+          affectedAssets: f.affected_component ? [f.affected_component] : [],
+          status: (f.status?.toLowerCase() || 'open') as 'open' | 'remediated' | 'accepted' | 'false_positive',
+          reportedBy: f.created_by,
+          createdAt: new Date(f.created_at),
+          updatedAt: new Date(f.created_at),
+        };
+      });
+
+      await generateTechnicalReport(reportProject, reportFindings);
+      toast.success('Technical Report generated successfully!');
+    } catch (error) {
+      toast.error('Failed to generate report');
+      console.error(error);
+    }
+  };
+
+  const handleGenerateManagementReport = async () => {
+    if (!project) return;
+    try {
+      const reportProject = {
+        id: project.id,
+        name: project.name,
+        description: '',
+        client: project.client,
+        targetDomain: project.domain || '',
+        targetIPs: project.ip_addresses || [],
+        credentials: [],
+        assignedTesters: [],
+        managerId: '',
+        status: (project.status || 'active') as 'active' | 'completed' | 'pending' | 'overdue',
+        startDate: project.start_date ? new Date(project.start_date) : new Date(),
+        endDate: project.end_date ? new Date(project.end_date) : new Date(),
+        createdAt: new Date(project.created_at),
+        findings: [],
+      };
+      
+      const reportFindings = findings.map(f => {
+        const severityMap: Record<string, 'critical' | 'high' | 'medium' | 'low' | 'info'> = {
+          'critical': 'critical',
+          'high': 'high',
+          'medium': 'medium',
+          'low': 'low',
+          'informational': 'info',
+        };
+        return {
+          id: f.id,
+          projectId: project.id,
+          title: f.title,
+          description: f.description || '',
+          severity: severityMap[f.severity.toLowerCase()] || 'medium',
+          cvssScore: f.cvss_score || 0,
+          stepsToReproduce: f.steps_to_reproduce || '',
+          impact: f.impact || '',
+          remediation: f.remediation || '',
+          affectedAssets: f.affected_component ? [f.affected_component] : [],
+          status: (f.status?.toLowerCase() || 'open') as 'open' | 'remediated' | 'accepted' | 'false_positive',
+          reportedBy: f.created_by,
+          createdAt: new Date(f.created_at),
+          updatedAt: new Date(f.created_at),
+        };
+      });
+
+      await generateManagementReport(reportProject, reportFindings);
+      toast.success('Management Report generated successfully!');
+    } catch (error) {
+      toast.error('Failed to generate report');
+      console.error(error);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <DashboardLayout title="Loading...">
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   if (!project) {
     return (
@@ -42,41 +273,6 @@ export default function ProjectDetail() {
       </DashboardLayout>
     );
   }
-
-  const projectFindings = allFindings.filter(f => f.projectId === project.id);
-  const assignedUsers = users.filter(u => project.assignedTesters.includes(u.id));
-
-  const formatDate = (date: Date) => {
-    return new Date(date).toLocaleDateString('en-US', {
-      month: 'long',
-      day: 'numeric',
-      year: 'numeric',
-    });
-  };
-
-  const getSeverityBadge = (severity: Severity) => {
-    return <Badge variant={severity}>{severity}</Badge>;
-  };
-
-  const handleGenerateTechnicalReport = async () => {
-    try {
-      await generateTechnicalReport(project, projectFindings);
-      toast.success('Technical Report generated successfully!');
-    } catch (error) {
-      toast.error('Failed to generate report');
-      console.error(error);
-    }
-  };
-
-  const handleGenerateManagementReport = async () => {
-    try {
-      await generateManagementReport(project, projectFindings);
-      toast.success('Management Report generated successfully!');
-    } catch (error) {
-      toast.error('Failed to generate report');
-      console.error(error);
-    }
-  };
 
   return (
     <DashboardLayout
@@ -95,19 +291,19 @@ export default function ProjectDetail() {
         {/* Project Status */}
         <div className="flex items-center gap-4">
           <Badge variant={project.status as any} className="text-sm px-3 py-1">
-            {project.status.charAt(0).toUpperCase() + project.status.slice(1)}
+            {(project.status || 'pending').charAt(0).toUpperCase() + (project.status || 'pending').slice(1)}
           </Badge>
           <span className="text-muted-foreground">
-            {formatDate(project.startDate)} - {formatDate(project.endDate)}
+            {formatDate(project.start_date)} - {formatDate(project.end_date)}
           </span>
         </div>
 
         <Tabs defaultValue="overview" className="space-y-6">
           <TabsList className="bg-secondary/50">
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="findings">Findings ({projectFindings.length})</TabsTrigger>
-            <TabsTrigger value="team">Team</TabsTrigger>
-            {(user?.role === 'admin' || user?.role === 'manager') && (
+            <TabsTrigger value="findings">Findings ({findings.length})</TabsTrigger>
+            <TabsTrigger value="team">Team ({assignees.length})</TabsTrigger>
+            {(role === 'admin' || role === 'manager') && (
               <TabsTrigger value="reports">Reports</TabsTrigger>
             )}
           </TabsList>
@@ -125,59 +321,60 @@ export default function ProjectDetail() {
                 <CardContent className="space-y-4">
                   <div>
                     <p className="text-sm text-muted-foreground">Domain</p>
-                    <p className="font-mono text-sm mt-1">{project.targetDomain}</p>
+                    <p className="font-mono text-sm mt-1">{project.domain || 'Not specified'}</p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">IP Addresses</p>
                     <div className="flex flex-wrap gap-2 mt-1">
-                      {project.targetIPs.map((ip, i) => (
-                        <Badge key={i} variant="secondary" className="font-mono">
-                          {ip}
-                        </Badge>
-                      ))}
+                      {project.ip_addresses && project.ip_addresses.length > 0 ? (
+                        project.ip_addresses.map((ip, i) => (
+                          <Badge key={i} variant="secondary" className="font-mono">
+                            {ip}
+                          </Badge>
+                        ))
+                      ) : (
+                        <span className="text-muted-foreground text-sm">No IPs specified</span>
+                      )}
                     </div>
                   </div>
                 </CardContent>
               </Card>
 
-              {/* Credentials */}
-              {project.credentials && project.credentials.length > 0 && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-lg flex items-center gap-2">
-                      <Key className="h-5 w-5 text-primary" />
-                      Test Credentials
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {project.credentials.map((cred, i) => (
-                      <div key={i} className="p-3 rounded-lg bg-secondary/30 border border-border/50">
-                        <div className="flex items-center gap-4">
-                          <div>
-                            <p className="text-xs text-muted-foreground">Username</p>
-                            <p className="font-mono text-sm">{cred.username}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-muted-foreground">Password</p>
-                            <p className="font-mono text-sm">{cred.password}</p>
-                          </div>
-                        </div>
-                        {cred.notes && (
-                          <p className="text-xs text-muted-foreground mt-2">{cred.notes}</p>
-                        )}
-                      </div>
-                    ))}
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Description */}
-              <Card className="lg:col-span-2">
+              {/* Findings Summary */}
+              <Card>
                 <CardHeader>
-                  <CardTitle className="text-lg">Project Description</CardTitle>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Bug className="h-5 w-5 text-primary" />
+                    Findings Summary
+                  </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-muted-foreground">{project.description}</p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="text-center p-3 rounded-lg bg-destructive/10">
+                      <p className="text-2xl font-bold text-destructive">
+                        {findings.filter(f => f.severity === 'Critical').length}
+                      </p>
+                      <p className="text-sm text-muted-foreground">Critical</p>
+                    </div>
+                    <div className="text-center p-3 rounded-lg bg-orange-500/10">
+                      <p className="text-2xl font-bold text-orange-500">
+                        {findings.filter(f => f.severity === 'High').length}
+                      </p>
+                      <p className="text-sm text-muted-foreground">High</p>
+                    </div>
+                    <div className="text-center p-3 rounded-lg bg-yellow-500/10">
+                      <p className="text-2xl font-bold text-yellow-500">
+                        {findings.filter(f => f.severity === 'Medium').length}
+                      </p>
+                      <p className="text-sm text-muted-foreground">Medium</p>
+                    </div>
+                    <div className="text-center p-3 rounded-lg bg-blue-500/10">
+                      <p className="text-2xl font-bold text-blue-500">
+                        {findings.filter(f => f.severity === 'Low').length}
+                      </p>
+                      <p className="text-sm text-muted-foreground">Low</p>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -186,7 +383,7 @@ export default function ProjectDetail() {
           <TabsContent value="findings" className="space-y-4">
             <div className="flex justify-between items-center">
               <p className="text-muted-foreground">
-                {projectFindings.length} findings reported
+                {findings.length} findings reported
               </p>
               <Link to="/findings">
                 <Button variant="gradient">
@@ -196,7 +393,7 @@ export default function ProjectDetail() {
               </Link>
             </div>
 
-            {projectFindings.length === 0 ? (
+            {findings.length === 0 ? (
               <Card className="p-12 text-center">
                 <Bug className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
                 <p className="text-lg font-medium">No findings yet</p>
@@ -206,7 +403,7 @@ export default function ProjectDetail() {
               </Card>
             ) : (
               <div className="space-y-3">
-                {projectFindings.map((finding, index) => (
+                {findings.map((finding, index) => (
                   <Card
                     key={finding.id}
                     glow
@@ -217,13 +414,10 @@ export default function ProjectDetail() {
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-3 mb-2">
-                            <Badge variant="outline" className="font-mono text-xs">
-                              {finding.id}
-                            </Badge>
                             {getSeverityBadge(finding.severity)}
-                            {finding.cvssScore && (
+                            {finding.cvss_score && (
                               <span className="text-sm text-muted-foreground">
-                                CVSS: {finding.cvssScore}
+                                CVSS: {finding.cvss_score}
                               </span>
                             )}
                           </div>
@@ -232,16 +426,16 @@ export default function ProjectDetail() {
                             {finding.description}
                           </p>
                         </div>
-                        <Badge variant={finding.status === 'open' ? 'destructive' : 'secondary'}>
+                        <Badge variant={finding.status === 'Open' ? 'destructive' : 'secondary'}>
                           {finding.status}
                         </Badge>
                       </div>
                       <div className="flex items-center gap-4 mt-4 text-sm text-muted-foreground">
                         <span>
-                          Reported by: {users.find(u => u.id === finding.reportedBy)?.username}
+                          Reported by: {getUsername(finding.created_by)}
                         </span>
                         <span>
-                          {new Date(finding.createdAt).toLocaleDateString()}
+                          {new Date(finding.created_at).toLocaleDateString()}
                         </span>
                       </div>
                     </CardContent>
@@ -252,27 +446,35 @@ export default function ProjectDetail() {
           </TabsContent>
 
           <TabsContent value="team" className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {assignedUsers.map((member) => (
-                <Card key={member.id} glow>
-                  <CardContent className="p-4">
-                    <div className="flex items-center gap-4">
-                      <div className="h-12 w-12 rounded-full gradient-technieum flex items-center justify-center text-primary-foreground font-semibold text-lg">
-                        {member.username.charAt(0).toUpperCase()}
+            {assignees.length === 0 ? (
+              <Card className="p-12 text-center">
+                <p className="text-lg font-medium">No team members assigned</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Assign testers to this project from the Projects page
+                </p>
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {assignees.map((member) => (
+                  <Card key={member.user_id} glow>
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-4">
+                        <div className="h-12 w-12 rounded-full gradient-technieum flex items-center justify-center text-primary-foreground font-semibold text-lg">
+                          {member.username.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <p className="font-medium">{member.username}</p>
+                          <Badge variant="secondary" className="mt-1">Tester</Badge>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-medium">{member.username}</p>
-                        <p className="text-sm text-muted-foreground">{member.email}</p>
-                        <Badge variant="secondary" className="mt-1">{member.role}</Badge>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
           </TabsContent>
 
-          {(user?.role === 'admin' || user?.role === 'manager') && (
+          {(role === 'admin' || role === 'manager') && (
             <TabsContent value="reports" className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Card glow>
