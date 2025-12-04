@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -6,10 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { projects, users } from '@/data/mockData';
 import { useAuth } from '@/contexts/AuthContext';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
+import { supabase } from '@/integrations/supabase/client';
 import {
   Search,
   Plus,
@@ -19,6 +19,8 @@ import {
   Server,
   ChevronRight,
   Filter,
+  Loader2,
+  UserPlus,
 } from 'lucide-react';
 import {
   Select,
@@ -36,11 +38,40 @@ import {
   DialogClose,
 } from '@/components/ui/dialog';
 
+type Project = {
+  id: string;
+  name: string;
+  client: string;
+  domain: string | null;
+  ip_addresses: string[] | null;
+  status: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  created_at: string;
+  created_by: string | null;
+  findings_count?: number;
+  critical_count?: number;
+  assignees_count?: number;
+};
+
+type Profile = {
+  id: string;
+  user_id: string;
+  username: string;
+};
+
 export default function Projects() {
-  const { user } = useAuth();
+  const { role, user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [selectedTester, setSelectedTester] = useState<string>('');
+  const [isAssigning, setIsAssigning] = useState(false);
   
   // Form state for new project
   const [newProject, setNewProject] = useState({
@@ -53,11 +84,63 @@ export default function Projects() {
     endDate: '',
   });
 
-  const userProjects = user?.role === 'tester'
-    ? projects.filter(p => p.assignedTesters.includes(user.id))
-    : projects;
+  useEffect(() => {
+    fetchData();
+  }, [user]);
 
-  const filteredProjects = userProjects.filter((project) => {
+  const fetchData = async () => {
+    if (!user) return;
+    
+    setIsLoading(true);
+    try {
+      // Fetch projects
+      const { data: projectsData, error: projectsError } = await supabase
+        .from('projects')
+        .select('*');
+
+      if (projectsError) throw projectsError;
+
+      // Fetch findings count per project
+      const { data: findingsData } = await supabase
+        .from('findings')
+        .select('project_id, severity');
+
+      // Fetch project assignments count
+      const { data: assignmentsData } = await supabase
+        .from('project_assignments')
+        .select('project_id');
+
+      // Fetch profiles for tester assignment
+      const { data: profilesData } = await supabase
+        .from('profiles')
+        .select('*');
+
+      setProfiles(profilesData || []);
+
+      // Combine data
+      const projectsWithCounts = (projectsData || []).map(project => {
+        const projectFindings = findingsData?.filter(f => f.project_id === project.id) || [];
+        const criticalFindings = projectFindings.filter(f => f.severity === 'critical');
+        const assignees = assignmentsData?.filter(a => a.project_id === project.id) || [];
+
+        return {
+          ...project,
+          findings_count: projectFindings.length,
+          critical_count: criticalFindings.length,
+          assignees_count: assignees.length,
+        };
+      });
+
+      setProjects(projectsWithCounts);
+    } catch (error) {
+      console.error('Error fetching projects:', error);
+      toast.error('Failed to load projects');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const filteredProjects = projects.filter((project) => {
     const matchesSearch =
       project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       project.client.toLowerCase().includes(searchQuery.toLowerCase());
@@ -65,25 +148,26 @@ export default function Projects() {
     return matchesSearch && matchesStatus;
   });
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string | null) => {
     const variants: Record<string, 'active' | 'completed' | 'pending' | 'overdue'> = {
       active: 'active',
       completed: 'completed',
       pending: 'pending',
       overdue: 'overdue',
     };
-    return <Badge variant={variants[status] || 'secondary'}>{status}</Badge>;
+    return <Badge variant={variants[status || 'pending'] || 'secondary'}>{status || 'pending'}</Badge>;
   };
 
-  const formatDate = (date: Date) => {
-    return new Date(date).toLocaleDateString('en-US', {
+  const formatDate = (dateStr: string | null) => {
+    if (!dateStr) return 'Not set';
+    return new Date(dateStr).toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
     });
   };
 
-  const handleCreateProject = (e: React.FormEvent) => {
+  const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!newProject.name || !newProject.client || !newProject.targetDomain) {
@@ -91,19 +175,97 @@ export default function Projects() {
       return;
     }
 
-    // In a real app, this would make an API call
-    toast.success('Project created successfully!');
-    setIsDialogOpen(false);
-    setNewProject({
-      name: '',
-      client: '',
-      description: '',
-      targetDomain: '',
-      targetIPs: '',
-      startDate: '',
-      endDate: '',
-    });
+    try {
+      const { error } = await supabase
+        .from('projects')
+        .insert({
+          name: newProject.name,
+          client: newProject.client,
+          domain: newProject.targetDomain,
+          ip_addresses: newProject.targetIPs ? newProject.targetIPs.split(',').map(ip => ip.trim()) : null,
+          start_date: newProject.startDate || null,
+          end_date: newProject.endDate || null,
+          created_by: user?.id,
+          status: 'active',
+        });
+
+      if (error) throw error;
+
+      toast.success('Project created successfully!');
+      setIsDialogOpen(false);
+      setNewProject({
+        name: '',
+        client: '',
+        description: '',
+        targetDomain: '',
+        targetIPs: '',
+        startDate: '',
+        endDate: '',
+      });
+      fetchData();
+    } catch (error) {
+      console.error('Error creating project:', error);
+      toast.error('Failed to create project');
+    }
   };
+
+  const handleAssignTester = async () => {
+    if (!selectedProject || !selectedTester) {
+      toast.error('Please select a tester');
+      return;
+    }
+
+    setIsAssigning(true);
+    try {
+      // Get the user_id from the profile
+      const profile = profiles.find(p => p.id === selectedTester);
+      if (!profile) {
+        toast.error('Tester not found');
+        return;
+      }
+
+      const { error } = await supabase
+        .from('project_assignments')
+        .insert({
+          project_id: selectedProject.id,
+          user_id: profile.user_id,
+        });
+
+      if (error) {
+        if (error.code === '23505') {
+          toast.error('Tester is already assigned to this project');
+        } else {
+          throw error;
+        }
+      } else {
+        toast.success('Tester assigned successfully!');
+        setIsAssignDialogOpen(false);
+        setSelectedTester('');
+        fetchData();
+      }
+    } catch (error) {
+      console.error('Error assigning tester:', error);
+      toast.error('Failed to assign tester');
+    } finally {
+      setIsAssigning(false);
+    }
+  };
+
+  const openAssignDialog = (project: Project) => {
+    setSelectedProject(project);
+    setSelectedTester('');
+    setIsAssignDialogOpen(true);
+  };
+
+  if (isLoading) {
+    return (
+      <DashboardLayout title="Projects" description="Manage and track all penetration testing engagements">
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout
@@ -135,7 +297,7 @@ export default function Projects() {
               <SelectItem value="overdue">Overdue</SelectItem>
             </SelectContent>
           </Select>
-          {(user?.role === 'admin' || user?.role === 'manager') && (
+          {(role === 'admin' || role === 'manager') && (
             <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
               <DialogTrigger asChild>
                 <Button variant="gradient">
@@ -245,49 +407,53 @@ export default function Projects() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                <p className="text-sm text-muted-foreground line-clamp-2">
-                  {project.description}
-                </p>
-
                 <div className="grid grid-cols-2 gap-4">
                   <div className="flex items-center gap-2 text-sm">
                     <Globe className="h-4 w-4 text-primary" />
-                    <span className="text-muted-foreground truncate">{project.targetDomain}</span>
+                    <span className="text-muted-foreground truncate">{project.domain || 'Not set'}</span>
                   </div>
                   <div className="flex items-center gap-2 text-sm">
                     <Server className="h-4 w-4 text-primary" />
-                    <span className="text-muted-foreground">{project.targetIPs.length} IPs</span>
+                    <span className="text-muted-foreground">{project.ip_addresses?.length || 0} IPs</span>
                   </div>
                   <div className="flex items-center gap-2 text-sm">
                     <Calendar className="h-4 w-4 text-primary" />
                     <span className="text-muted-foreground">
-                      {formatDate(project.startDate)} - {formatDate(project.endDate)}
+                      {formatDate(project.start_date)} - {formatDate(project.end_date)}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 text-sm">
                     <UsersIcon className="h-4 w-4 text-primary" />
                     <span className="text-muted-foreground">
-                      {project.assignedTesters.length} Testers
+                      {project.assignees_count} Testers
                     </span>
                   </div>
                 </div>
 
                 <div className="flex items-center justify-between pt-2 border-t border-border/50">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">{project.findings.length}</span>
+                    <span className="text-sm font-medium">{project.findings_count}</span>
                     <span className="text-sm text-muted-foreground">Findings</span>
-                    {project.findings.filter(f => f.severity === 'critical').length > 0 && (
+                    {(project.critical_count || 0) > 0 && (
                       <Badge variant="critical" className="text-xs">
-                        {project.findings.filter(f => f.severity === 'critical').length} Critical
+                        {project.critical_count} Critical
                       </Badge>
                     )}
                   </div>
-                  <Link to={`/projects/${project.id}`}>
-                    <Button variant="ghost" size="sm">
-                      View Details
-                      <ChevronRight className="h-4 w-4 ml-1" />
-                    </Button>
-                  </Link>
+                  <div className="flex items-center gap-2">
+                    {(role === 'admin' || role === 'manager') && (
+                      <Button variant="ghost" size="sm" onClick={() => openAssignDialog(project)}>
+                        <UserPlus className="h-4 w-4 mr-1" />
+                        Assign
+                      </Button>
+                    )}
+                    <Link to={`/projects/${project.id}`}>
+                      <Button variant="ghost" size="sm">
+                        View Details
+                        <ChevronRight className="h-4 w-4 ml-1" />
+                      </Button>
+                    </Link>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -298,10 +464,55 @@ export default function Projects() {
           <Card className="p-12">
             <div className="text-center text-muted-foreground">
               <p className="text-lg font-medium">No projects found</p>
-              <p className="text-sm mt-1">Try adjusting your search or filter criteria</p>
+              <p className="text-sm mt-1">
+                {projects.length === 0 
+                  ? 'Create a new project to get started'
+                  : 'Try adjusting your search or filter criteria'}
+              </p>
             </div>
           </Card>
         )}
+
+        {/* Assign Tester Dialog */}
+        <Dialog open={isAssignDialogOpen} onOpenChange={setIsAssignDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Assign Tester to {selectedProject?.name}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 mt-4">
+              <div className="space-y-2">
+                <Label>Select Tester</Label>
+                <Select value={selectedTester} onValueChange={setSelectedTester}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a tester" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {profiles.map(profile => (
+                      <SelectItem key={profile.id} value={profile.id}>
+                        {profile.username}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex justify-end gap-3">
+                <Button type="button" variant="outline" onClick={() => setIsAssignDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button variant="gradient" onClick={handleAssignTester} disabled={isAssigning}>
+                  {isAssigning ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Assigning...
+                    </>
+                  ) : (
+                    'Assign Tester'
+                  )}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </DashboardLayout>
   );
