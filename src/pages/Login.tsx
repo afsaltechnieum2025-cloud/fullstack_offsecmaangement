@@ -177,8 +177,9 @@ export default function Login() {
               <div className="mt-6 p-4 rounded-lg bg-secondary/30 border border-border/50">
                 <p className="text-xs text-muted-foreground mb-2 font-medium">Demo Credentials:</p>
                 <div className="space-y-1 text-xs font-mono">
-                  <p className="text-muted-foreground">Tester: <span className="text-foreground">robertaaron / robert123</span></p>
-                  <p className="text-muted-foreground">Admin: <span className="text-foreground">robertadmin / robert123</span></p>
+                  <p className="text-muted-foreground">Tester: <span className="text-foreground">robert_tester / robert123</span></p>
+                  <p className="text-muted-foreground">Manager: <span className="text-foreground">robert_manager / robert123</span></p>
+                  <p className="text-muted-foreground">Admin: <span className="text-foreground">admin / robert123</span></p>
                 </div>
               </div>
             </CardContent>
