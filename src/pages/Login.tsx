@@ -5,23 +5,17 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { AlertCircle, Mail, Eye, EyeOff, UserPlus } from 'lucide-react';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { AlertCircle, Mail, Eye, EyeOff } from 'lucide-react';
 import logo from '@/assets/technieum-logo.png';
-
-type AppRole = 'admin' | 'manager' | 'tester';
 
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [username, setUsername] = useState('');
-  const [role, setRole] = useState<AppRole>('tester');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isSignUp, setIsSignUp] = useState(false);
-  const { login, signup } = useAuth();
+  const { login } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -30,20 +24,11 @@ export default function Login() {
     setIsLoading(true);
 
     try {
-      if (isSignUp) {
-        const { error } = await signup(email, password, username, role);
-        if (error) {
-          setError(error);
-        } else {
-          navigate('/dashboard');
-        }
+      const { error } = await login(email, password);
+      if (error) {
+        setError(error);
       } else {
-        const { error } = await login(email, password);
-        if (error) {
-          setError(error);
-        } else {
-          navigate('/dashboard');
-        }
+        navigate('/dashboard');
       }
     } catch (err) {
       setError('An error occurred. Please try again.');
@@ -95,9 +80,7 @@ export default function Login() {
 
           <Card className="border-border/50 bg-card/80 backdrop-blur-xl animate-slide-up">
             <CardHeader className="space-y-1 pb-4 text-center">
-              <CardTitle className="text-2xl text-gradient">
-                {isSignUp ? 'CREATE ACCOUNT' : 'LOGIN'}
-              </CardTitle>
+              <CardTitle className="text-2xl text-gradient">LOGIN</CardTitle>
             </CardHeader>
             <CardContent>
               <form onSubmit={handleSubmit} className="space-y-4">
@@ -106,36 +89,6 @@ export default function Login() {
                     <AlertCircle className="w-4 h-4" />
                     {error}
                   </div>
-                )}
-                
-                {isSignUp && (
-                  <>
-                    <div className="space-y-2">
-                      <Label htmlFor="username">Username</Label>
-                      <Input
-                        id="username"
-                        type="text"
-                        placeholder="Enter username"
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        className="bg-secondary/50 border-border focus:border-primary"
-                        required
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Role</Label>
-                      <Select value={role} onValueChange={(v) => setRole(v as AppRole)}>
-                        <SelectTrigger className="bg-secondary/50">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="tester">Tester</SelectItem>
-                          <SelectItem value="manager">Manager</SelectItem>
-                          <SelectItem value="admin">Admin</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </>
                 )}
                 
                 <div className="space-y-2">
@@ -177,19 +130,17 @@ export default function Login() {
                   </div>
                 </div>
 
-                {!isSignUp && (
-                  <div className="flex items-center justify-between">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={rememberMe}
-                        onChange={(e) => setRememberMe(e.target.checked)}
-                        className="w-4 h-4 rounded border-border bg-secondary accent-primary"
-                      />
-                      <span className="text-sm text-muted-foreground">Remember me</span>
-                    </label>
-                  </div>
-                )}
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={rememberMe}
+                      onChange={(e) => setRememberMe(e.target.checked)}
+                      className="w-4 h-4 rounded border-border bg-secondary accent-primary"
+                    />
+                    <span className="text-sm text-muted-foreground">Remember me</span>
+                  </label>
+                </div>
 
                 <Button
                   type="submit"
@@ -203,26 +154,16 @@ export default function Login() {
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                       </svg>
-                      {isSignUp ? 'Creating account...' : 'Signing in...'}
+                      Signing in...
                     </span>
                   ) : (
-                    isSignUp ? 'CREATE ACCOUNT' : 'LOGIN'
+                    'LOGIN'
                   )}
                 </Button>
 
-                <div className="text-center">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsSignUp(!isSignUp);
-                      setError('');
-                    }}
-                    className="text-sm text-muted-foreground hover:text-primary flex items-center gap-1 mx-auto"
-                  >
-                    <UserPlus className="w-4 h-4" />
-                    {isSignUp ? 'Already have an account? Login' : 'Need an account? Sign up'}
-                  </button>
-                </div>
+                <p className="text-center text-xs text-muted-foreground mt-4">
+                  Contact your administrator for account access
+                </p>
               </form>
             </CardContent>
           </Card>

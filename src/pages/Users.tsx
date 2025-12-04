@@ -1,34 +1,34 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { users } from '@/data/mockData';
 import { useAuth } from '@/contexts/AuthContext';
 import { Navigate } from 'react-router-dom';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 import {
   Search,
-  Plus,
-  UserPlus,
   Shield,
   Mail,
   Calendar,
   MoreVertical,
+  UserPlus,
+  Loader2,
 } from 'lucide-react';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -38,27 +38,128 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
+type AppRole = 'admin' | 'manager' | 'tester';
+
+interface UserWithRole {
+  id: string;
+  user_id: string;
+  username: string;
+  full_name: string | null;
+  created_at: string;
+  role: AppRole | null;
+}
+
 export default function Users() {
-  const { user } = useAuth();
+  const { role } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
+  const [users, setUsers] = useState<UserWithRole[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [selectedUser, setSelectedUser] = useState<UserWithRole | null>(null);
+  const [newRole, setNewRole] = useState<AppRole>('tester');
+  const [isRoleDialogOpen, setIsRoleDialogOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   // Only admins can access this page
-  if (user?.role !== 'admin') {
+  if (role !== 'admin') {
     return <Navigate to="/dashboard" replace />;
   }
 
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  const fetchUsers = async () => {
+    setIsLoading(true);
+    try {
+      // Fetch profiles
+      const { data: profiles, error: profilesError } = await supabase
+        .from('profiles')
+        .select('*');
+
+      if (profilesError) throw profilesError;
+
+      // Fetch roles
+      const { data: roles, error: rolesError } = await supabase
+        .from('user_roles')
+        .select('*');
+
+      if (rolesError) throw rolesError;
+
+      // Combine profiles with roles
+      const usersWithRoles: UserWithRole[] = (profiles || []).map(profile => {
+        const userRole = roles?.find(r => r.user_id === profile.user_id);
+        return {
+          id: profile.id,
+          user_id: profile.user_id,
+          username: profile.username,
+          full_name: profile.full_name,
+          created_at: profile.created_at,
+          role: userRole?.role as AppRole | null,
+        };
+      });
+
+      setUsers(usersWithRoles);
+    } catch (error) {
+      console.error('Error fetching users:', error);
+      toast.error('Failed to load users');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleChangeRole = (user: UserWithRole) => {
+    setSelectedUser(user);
+    setNewRole(user.role || 'tester');
+    setIsRoleDialogOpen(true);
+  };
+
+  const saveRole = async () => {
+    if (!selectedUser) return;
+
+    setIsSaving(true);
+    try {
+      if (selectedUser.role) {
+        // Update existing role
+        const { error } = await supabase
+          .from('user_roles')
+          .update({ role: newRole })
+          .eq('user_id', selectedUser.user_id);
+
+        if (error) throw error;
+      } else {
+        // Insert new role
+        const { error } = await supabase
+          .from('user_roles')
+          .insert({ user_id: selectedUser.user_id, role: newRole });
+
+        if (error) throw error;
+      }
+
+      toast.success('Role updated successfully');
+      setIsRoleDialogOpen(false);
+      fetchUsers();
+    } catch (error) {
+      console.error('Error updating role:', error);
+      toast.error('Failed to update role');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const filteredUsers = users.filter((u) =>
-    u.username.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    u.email.toLowerCase().includes(searchQuery.toLowerCase())
+    u.username.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const getRoleBadge = (role: string) => {
+  const getRoleBadge = (userRole: AppRole | null) => {
+    if (!userRole) {
+      return <Badge variant="outline" className="text-muted-foreground">No role</Badge>;
+    }
     const variants: Record<string, 'default' | 'secondary' | 'outline'> = {
       admin: 'default',
       manager: 'secondary',
       tester: 'outline',
     };
-    return <Badge variant={variants[role]}>{role}</Badge>;
+    return <Badge variant={variants[userRole]}>{userRole}</Badge>;
   };
 
   const roleStats = {
@@ -66,6 +167,16 @@ export default function Users() {
     managers: users.filter(u => u.role === 'manager').length,
     testers: users.filter(u => u.role === 'tester').length,
   };
+
+  if (isLoading) {
+    return (
+      <DashboardLayout title="User Management" description="Manage team members and their roles">
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout
@@ -127,50 +238,6 @@ export default function Users() {
               className="pl-10 bg-secondary/50"
             />
           </div>
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button variant="gradient">
-                <Plus className="h-4 w-4 mr-2" />
-                Add User
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Add New User</DialogTitle>
-              </DialogHeader>
-              <form className="space-y-4 mt-4">
-                <div className="space-y-2">
-                  <Label>Username</Label>
-                  <Input placeholder="Enter username" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Email</Label>
-                  <Input type="email" placeholder="Enter email address" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Password</Label>
-                  <Input type="password" placeholder="Enter password" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Role</Label>
-                  <Select>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select role" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="admin">Admin</SelectItem>
-                      <SelectItem value="manager">Manager</SelectItem>
-                      <SelectItem value="tester">Tester</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex justify-end gap-3">
-                  <Button type="button" variant="outline">Cancel</Button>
-                  <Button type="submit" variant="gradient">Create User</Button>
-                </div>
-              </form>
-            </DialogContent>
-          </Dialog>
         </div>
 
         {/* Users Grid */}
@@ -192,7 +259,7 @@ export default function Users() {
                       <p className="font-semibold">{member.username}</p>
                       <div className="flex items-center gap-1 text-sm text-muted-foreground">
                         <Mail className="h-3 w-3" />
-                        {member.email}
+                        {member.full_name || 'No name set'}
                       </div>
                     </div>
                   </div>
@@ -203,9 +270,9 @@ export default function Users() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem>Edit User</DropdownMenuItem>
-                      <DropdownMenuItem>Change Role</DropdownMenuItem>
-                      <DropdownMenuItem className="text-destructive">Delete User</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => handleChangeRole(member)}>
+                        Change Role
+                      </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
@@ -213,7 +280,7 @@ export default function Users() {
                   {getRoleBadge(member.role)}
                   <div className="flex items-center gap-1 text-xs text-muted-foreground">
                     <Calendar className="h-3 w-3" />
-                    Joined {new Date(member.createdAt).toLocaleDateString()}
+                    Joined {new Date(member.created_at).toLocaleDateString()}
                   </div>
                 </div>
               </CardContent>
@@ -226,10 +293,51 @@ export default function Users() {
             <UserPlus className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
             <p className="text-lg font-medium">No users found</p>
             <p className="text-sm text-muted-foreground mt-1">
-              Try adjusting your search criteria
+              {users.length === 0 
+                ? 'Create users via the backend to get started'
+                : 'Try adjusting your search criteria'}
             </p>
           </Card>
         )}
+
+        {/* Change Role Dialog */}
+        <Dialog open={isRoleDialogOpen} onOpenChange={setIsRoleDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Change Role for {selectedUser?.username}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 mt-4">
+              <div className="space-y-2">
+                <Label>Select Role</Label>
+                <Select value={newRole} onValueChange={(v) => setNewRole(v as AppRole)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin">Admin</SelectItem>
+                    <SelectItem value="manager">Manager</SelectItem>
+                    <SelectItem value="tester">Tester</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex justify-end gap-3">
+                <Button type="button" variant="outline" onClick={() => setIsRoleDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button variant="gradient" onClick={saveRole} disabled={isSaving}>
+                  {isSaving ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    'Save Role'
+                  )}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </DashboardLayout>
   );
