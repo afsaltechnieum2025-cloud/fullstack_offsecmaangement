@@ -4,9 +4,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { projects, users } from '@/data/mockData';
 import { useAuth } from '@/contexts/AuthContext';
 import { Link } from 'react-router-dom';
+import { toast } from 'sonner';
 import {
   Search,
   Plus,
@@ -24,11 +27,31 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogClose,
+} from '@/components/ui/dialog';
 
 export default function Projects() {
   const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  
+  // Form state for new project
+  const [newProject, setNewProject] = useState({
+    name: '',
+    client: '',
+    description: '',
+    targetDomain: '',
+    targetIPs: '',
+    startDate: '',
+    endDate: '',
+  });
 
   const userProjects = user?.role === 'tester'
     ? projects.filter(p => p.assignedTesters.includes(user.id))
@@ -57,6 +80,28 @@ export default function Projects() {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
+    });
+  };
+
+  const handleCreateProject = (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!newProject.name || !newProject.client || !newProject.targetDomain) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+
+    // In a real app, this would make an API call
+    toast.success('Project created successfully!');
+    setIsDialogOpen(false);
+    setNewProject({
+      name: '',
+      client: '',
+      description: '',
+      targetDomain: '',
+      targetIPs: '',
+      startDate: '',
+      endDate: '',
     });
   };
 
@@ -91,10 +136,93 @@ export default function Projects() {
             </SelectContent>
           </Select>
           {(user?.role === 'admin' || user?.role === 'manager') && (
-            <Button variant="gradient">
-              <Plus className="h-4 w-4 mr-2" />
-              New Project
-            </Button>
+            <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="gradient">
+                  <Plus className="h-4 w-4 mr-2" />
+                  New Project
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>Create New Project</DialogTitle>
+                </DialogHeader>
+                <form onSubmit={handleCreateProject} className="space-y-4 mt-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Project Name *</Label>
+                      <Input 
+                        placeholder="e.g., Security Assessment"
+                        value={newProject.name}
+                        onChange={(e) => setNewProject({...newProject, name: e.target.value})}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Client Name *</Label>
+                      <Input 
+                        placeholder="e.g., Acme Corp"
+                        value={newProject.client}
+                        onChange={(e) => setNewProject({...newProject, client: e.target.value})}
+                        required
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Description</Label>
+                    <Textarea 
+                      placeholder="Project description and scope"
+                      value={newProject.description}
+                      onChange={(e) => setNewProject({...newProject, description: e.target.value})}
+                      rows={3}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Target Domain *</Label>
+                      <Input 
+                        placeholder="e.g., example.com"
+                        value={newProject.targetDomain}
+                        onChange={(e) => setNewProject({...newProject, targetDomain: e.target.value})}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Target IPs (comma-separated)</Label>
+                      <Input 
+                        placeholder="e.g., 192.168.1.1, 192.168.1.2"
+                        value={newProject.targetIPs}
+                        onChange={(e) => setNewProject({...newProject, targetIPs: e.target.value})}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Start Date</Label>
+                      <Input 
+                        type="date"
+                        value={newProject.startDate}
+                        onChange={(e) => setNewProject({...newProject, startDate: e.target.value})}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>End Date</Label>
+                      <Input 
+                        type="date"
+                        value={newProject.endDate}
+                        onChange={(e) => setNewProject({...newProject, endDate: e.target.value})}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-3 pt-4">
+                    <DialogClose asChild>
+                      <Button type="button" variant="outline">Cancel</Button>
+                    </DialogClose>
+                    <Button type="submit" variant="gradient">Create Project</Button>
+                  </div>
+                </form>
+              </DialogContent>
+            </Dialog>
           )}
         </div>
 

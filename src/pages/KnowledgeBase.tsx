@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { knowledgeBase, owaspChecklist, users } from '@/data/mockData';
+import { useAuth } from '@/contexts/AuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -14,8 +15,6 @@ import {
   CheckSquare,
   Wrench,
   ExternalLink,
-  ChevronDown,
-  ChevronUp,
   FileText,
 } from 'lucide-react';
 import {
@@ -35,8 +34,11 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 
 export default function KnowledgeBase() {
+  const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [checklistProgress, setChecklistProgress] = useState<Record<string, boolean>>({});
+
+  const canAddArticles = user?.role === 'manager' || user?.role === 'admin';
 
   const filteredKnowledge = knowledgeBase.filter((item) =>
     item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -74,51 +76,53 @@ export default function KnowledgeBase() {
               OWASP Checklist
             </TabsTrigger>
           </TabsList>
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button variant="gradient">
-                <Plus className="h-4 w-4 mr-2" />
-                Add Article
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-2xl">
-              <DialogHeader>
-                <DialogTitle>Add Knowledge Base Article</DialogTitle>
-              </DialogHeader>
-              <form className="space-y-4 mt-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Title</Label>
-                    <Input placeholder="Article title" />
+          {canAddArticles && (
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button variant="gradient">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Article
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-2xl">
+                <DialogHeader>
+                  <DialogTitle>Add Knowledge Base Article</DialogTitle>
+                </DialogHeader>
+                <form className="space-y-4 mt-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Title</Label>
+                      <Input placeholder="Article title" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Category</Label>
+                      <Input placeholder="e.g., Data Validation, Authentication" />
+                    </div>
                   </div>
                   <div className="space-y-2">
-                    <Label>Category</Label>
-                    <Input placeholder="e.g., Data Validation, Authentication" />
+                    <Label>Description</Label>
+                    <Textarea placeholder="Detailed description and documentation" rows={4} />
                   </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>Description</Label>
-                  <Textarea placeholder="Detailed description and documentation" rows={4} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Tools (comma-separated)</Label>
-                  <Input placeholder="e.g., Burp Suite, SQLMap, OWASP ZAP" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Techniques (comma-separated)</Label>
-                  <Input placeholder="e.g., SQL Injection, XSS, CSRF" />
-                </div>
-                <div className="space-y-2">
-                  <Label>References (one URL per line)</Label>
-                  <Textarea placeholder="https://example.com/resource" rows={2} />
-                </div>
-                <div className="flex justify-end gap-3">
-                  <Button type="button" variant="outline">Cancel</Button>
-                  <Button type="submit" variant="gradient">Submit Article</Button>
-                </div>
-              </form>
-            </DialogContent>
-          </Dialog>
+                  <div className="space-y-2">
+                    <Label>Tools (comma-separated)</Label>
+                    <Input placeholder="e.g., Burp Suite, SQLMap, OWASP ZAP" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Techniques (comma-separated)</Label>
+                    <Input placeholder="e.g., SQL Injection, XSS, CSRF" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>References (one URL per line)</Label>
+                    <Textarea placeholder="https://example.com/resource" rows={2} />
+                  </div>
+                  <div className="flex justify-end gap-3">
+                    <Button type="button" variant="outline">Cancel</Button>
+                    <Button type="submit" variant="gradient">Submit Article</Button>
+                  </div>
+                </form>
+              </DialogContent>
+            </Dialog>
+          )}
         </div>
 
         <TabsContent value="articles" className="space-y-6">
@@ -220,7 +224,7 @@ export default function KnowledgeBase() {
               <BookOpen className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
               <p className="text-lg font-medium">No articles found</p>
               <p className="text-sm text-muted-foreground mt-1">
-                Try adjusting your search or add a new article
+                {canAddArticles ? 'Try adjusting your search or add a new article' : 'Try adjusting your search criteria'}
               </p>
             </Card>
           )}
