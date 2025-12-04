@@ -16,6 +16,7 @@ import {
   MoreVertical,
   UserPlus,
   Loader2,
+  Plus,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -28,6 +29,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import {
@@ -50,7 +52,7 @@ interface UserWithRole {
 }
 
 export default function Users() {
-  const { role } = useAuth();
+  const { role, session } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [users, setUsers] = useState<UserWithRole[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -58,6 +60,14 @@ export default function Users() {
   const [newRole, setNewRole] = useState<AppRole>('tester');
   const [isRoleDialogOpen, setIsRoleDialogOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [newUser, setNewUser] = useState({
+    email: '',
+    password: '',
+    username: '',
+    role: 'tester' as AppRole,
+  });
 
   // Only admins can access this page
   if (role !== 'admin') {
@@ -143,6 +153,43 @@ export default function Users() {
       toast.error('Failed to update role');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleCreateUser = async () => {
+    if (!newUser.email || !newUser.password || !newUser.username) {
+      toast.error('Please fill in all fields');
+      return;
+    }
+
+    setIsCreating(true);
+    try {
+      const response = await supabase.functions.invoke('create-user', {
+        body: {
+          email: newUser.email,
+          password: newUser.password,
+          username: newUser.username,
+          role: newUser.role,
+        },
+      });
+
+      if (response.error) {
+        throw new Error(response.error.message);
+      }
+
+      if (response.data?.error) {
+        throw new Error(response.data.error);
+      }
+
+      toast.success('User created successfully!');
+      setIsCreateDialogOpen(false);
+      setNewUser({ email: '', password: '', username: '', role: 'tester' });
+      fetchUsers();
+    } catch (error) {
+      console.error('Error creating user:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to create user');
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -238,6 +285,78 @@ export default function Users() {
               className="pl-10 bg-secondary/50"
             />
           </div>
+          <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+            <DialogTrigger asChild>
+              <Button variant="gradient">
+                <Plus className="h-4 w-4 mr-2" />
+                Add User
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Create New User</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 mt-4">
+                <div className="space-y-2">
+                  <Label>Username</Label>
+                  <Input
+                    placeholder="Enter username"
+                    value={newUser.username}
+                    onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Email</Label>
+                  <Input
+                    type="email"
+                    placeholder="Enter email address"
+                    value={newUser.email}
+                    onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Password</Label>
+                  <Input
+                    type="password"
+                    placeholder="Enter password"
+                    value={newUser.password}
+                    onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Role</Label>
+                  <Select 
+                    value={newUser.role} 
+                    onValueChange={(v) => setNewUser({ ...newUser, role: v as AppRole })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="admin">Admin</SelectItem>
+                      <SelectItem value="manager">Manager</SelectItem>
+                      <SelectItem value="tester">Tester</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex justify-end gap-3">
+                  <Button type="button" variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button variant="gradient" onClick={handleCreateUser} disabled={isCreating}>
+                    {isCreating ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Creating...
+                      </>
+                    ) : (
+                      'Create User'
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
 
         {/* Users Grid */}
