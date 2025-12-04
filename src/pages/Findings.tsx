@@ -36,6 +36,7 @@ export default function Findings() {
   const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [severityFilter, setSeverityFilter] = useState<string>('all');
+  const [projectFilter, setProjectFilter] = useState<string>('all');
   const [expandedFinding, setExpandedFinding] = useState<string | null>(null);
 
   const userProjects = user?.role === 'tester'
@@ -51,7 +52,8 @@ export default function Findings() {
       finding.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       finding.description.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesSeverity = severityFilter === 'all' || finding.severity === severityFilter;
-    return matchesSearch && matchesSeverity;
+    const matchesProject = projectFilter === 'all' || finding.projectId === projectFilter;
+    return matchesSearch && matchesSeverity && matchesProject;
   });
 
   const getSeverityBadge = (severity: Severity) => {
@@ -100,6 +102,20 @@ export default function Findings() {
               <SelectItem value="info">Info</SelectItem>
             </SelectContent>
           </Select>
+          {/* Project Filter - for managers and admins */}
+          {(user?.role === 'manager' || user?.role === 'admin') && (
+            <Select value={projectFilter} onValueChange={setProjectFilter}>
+              <SelectTrigger className="w-full sm:w-48 bg-secondary/50">
+                <SelectValue placeholder="Filter by Project" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Projects</SelectItem>
+                {userProjects.map(p => (
+                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           <Dialog>
             <DialogTrigger asChild>
               <Button variant="gradient">
@@ -212,13 +228,16 @@ export default function Findings() {
                       {getSeverityIcon(finding.severity)}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-3 flex-wrap">
+                          <Badge variant="outline" className="text-xs font-mono">
+                            {finding.id}
+                          </Badge>
                           {getSeverityBadge(finding.severity)}
                           {finding.cvssScore && (
                             <span className="text-sm font-mono text-muted-foreground">
                               CVSS {finding.cvssScore}
                             </span>
                           )}
-                          <Badge variant="outline" className="text-xs">
+                          <Badge variant="secondary" className="text-xs">
                             {project?.name}
                           </Badge>
                         </div>
