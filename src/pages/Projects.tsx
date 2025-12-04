@@ -21,6 +21,7 @@ import {
   Filter,
   Loader2,
   UserPlus,
+  Trash2,
 } from 'lucide-react';
 import {
   Select,
@@ -37,6 +38,15 @@ import {
   DialogTrigger,
   DialogClose,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 type Project = {
   id: string;
@@ -72,6 +82,9 @@ export default function Projects() {
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [selectedTester, setSelectedTester] = useState<string>('');
   const [isAssigning, setIsAssigning] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   
   // Form state for new project
   const [newProject, setNewProject] = useState({
@@ -255,6 +268,36 @@ export default function Projects() {
     setSelectedProject(project);
     setSelectedTester('');
     setIsAssignDialogOpen(true);
+  };
+
+  const openDeleteDialog = (project: Project) => {
+    setProjectToDelete(project);
+    setIsDeleteDialogOpen(true);
+  };
+
+  const handleDeleteProject = async () => {
+    if (!projectToDelete) return;
+
+    setIsDeleting(true);
+    try {
+      // Delete project (cascade will handle assignments and findings)
+      const { error } = await supabase
+        .from('projects')
+        .delete()
+        .eq('id', projectToDelete.id);
+
+      if (error) throw error;
+
+      toast.success('Project deleted successfully!');
+      setIsDeleteDialogOpen(false);
+      setProjectToDelete(null);
+      fetchData();
+    } catch (error) {
+      console.error('Error deleting project:', error);
+      toast.error('Failed to delete project');
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   if (isLoading) {
@@ -447,6 +490,16 @@ export default function Projects() {
                         Assign
                       </Button>
                     )}
+                    {role === 'admin' && (
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={() => openDeleteDialog(project)}
+                        className="text-destructive hover:text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
                     <Link to={`/projects/${project.id}`}>
                       <Button variant="ghost" size="sm">
                         View Details
@@ -513,6 +566,39 @@ export default function Projects() {
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* Delete Project Confirmation Dialog */}
+        <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Project</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete <strong>{projectToDelete?.name}</strong>? 
+                This will permanently remove all findings and assignments associated with this project.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+              <Button 
+                variant="destructive" 
+                onClick={handleDeleteProject}
+                disabled={isDeleting}
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete Project
+                  </>
+                )}
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </DashboardLayout>
   );
