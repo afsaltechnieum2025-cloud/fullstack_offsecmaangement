@@ -18,8 +18,10 @@ import {
   Download,
   Plus,
   Loader2,
+  ChevronRight,
 } from 'lucide-react';
 import { generateTechnicalReport, generateManagementReport } from '@/utils/reportGenerator';
+import FindingDetailDialog from '@/components/FindingDetailDialog';
 
 type Project = {
   id: string;
@@ -46,6 +48,7 @@ type Finding = {
   impact: string | null;
   remediation: string | null;
   affected_component: string | null;
+  cwe_id: string | null;
 };
 
 type Profile = {
@@ -61,6 +64,8 @@ export default function ProjectDetail() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [assignees, setAssignees] = useState<Profile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -407,8 +412,12 @@ export default function ProjectDetail() {
                   <Card
                     key={finding.id}
                     glow
-                    className="animate-fade-in"
+                    className="animate-fade-in cursor-pointer hover:border-primary/50 transition-colors"
                     style={{ animationDelay: `${index * 50}ms` }}
+                    onClick={() => {
+                      setSelectedFinding(finding);
+                      setIsDetailOpen(true);
+                    }}
                   >
                     <CardContent className="p-4">
                       <div className="flex items-start justify-between gap-4">
@@ -426,9 +435,12 @@ export default function ProjectDetail() {
                             {finding.description}
                           </p>
                         </div>
-                        <Badge variant={finding.status === 'Open' ? 'destructive' : 'secondary'}>
-                          {finding.status}
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                          <Badge variant={finding.status === 'Open' ? 'destructive' : 'secondary'}>
+                            {finding.status}
+                          </Badge>
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                        </div>
                       </div>
                       <div className="flex items-center gap-4 mt-4 text-sm text-muted-foreground">
                         <span>
@@ -525,6 +537,16 @@ export default function ProjectDetail() {
           )}
         </Tabs>
       </div>
+
+      <FindingDetailDialog
+        finding={selectedFinding}
+        open={isDetailOpen}
+        onClose={() => {
+          setIsDetailOpen(false);
+          setSelectedFinding(null);
+        }}
+        creatorName={selectedFinding ? getUsername(selectedFinding.created_by) : undefined}
+      />
     </DashboardLayout>
   );
 }
