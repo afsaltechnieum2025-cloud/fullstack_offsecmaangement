@@ -26,18 +26,18 @@ const navigation = [
 ];
 
 export default function AppSidebar() {
-  const { user, logout } = useAuth();
+  const { user, logout, role, username } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     navigate('/login');
   };
 
   const filteredNavigation = navigation.filter(
-    (item) => user && item.roles.includes(user.role)
+    (item) => role && item.roles.includes(role)
   );
 
   return (
@@ -102,12 +102,12 @@ export default function AppSidebar() {
             collapsed && "justify-center"
           )}>
             <div className="h-9 w-9 rounded-full gradient-primary flex items-center justify-center text-primary-foreground font-semibold shrink-0">
-              {user.username.charAt(0).toUpperCase()}
+              {username?.charAt(0).toUpperCase() || 'U'}
             </div>
             {!collapsed && (
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">{user.username}</p>
-                <p className="text-xs text-muted-foreground capitalize">{user.role}</p>
+                <p className="text-sm font-medium truncate">{username}</p>
+                <p className="text-xs text-muted-foreground capitalize">{role}</p>
               </div>
             )}
           </div>
