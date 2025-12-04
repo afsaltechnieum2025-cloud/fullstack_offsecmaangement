@@ -47,11 +47,11 @@ const statusColors = {
 };
 
 export default function Dashboard() {
-  const { user } = useAuth();
+  const { user, role, username } = useAuth();
 
   const stats = useMemo(() => {
-    const userProjects = user?.role === 'tester' 
-      ? projects.filter(p => p.assignedTesters.includes(user.id))
+    const userProjects = role === 'tester' 
+      ? projects.filter(p => user && p.assignedTesters.includes(user.id))
       : projects;
 
     const allFindings = userProjects.flatMap(p => p.findings);
@@ -98,7 +98,7 @@ export default function Dashboard() {
 
   return (
     <DashboardLayout
-      title={`Welcome back, ${user?.username}`}
+      title={`Welcome back, ${username || 'User'}`}
       description="Here's an overview of your pentest operations"
     >
       <div className="space-y-6">
@@ -293,7 +293,7 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
-          {(user?.role === 'admin' || user?.role === 'manager') && (
+          {(role === 'admin' || role === 'manager') && (
             <Card className="animate-fade-in" style={{ animationDelay: '350ms' }}>
               <CardHeader>
                 <CardTitle className="text-lg">Team Members</CardTitle>

@@ -14,16 +14,232 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      finding_pocs: {
+        Row: {
+          file_name: string
+          file_path: string
+          finding_id: string
+          id: string
+          uploaded_at: string
+          uploaded_by: string
+        }
+        Insert: {
+          file_name: string
+          file_path: string
+          finding_id: string
+          id?: string
+          uploaded_at?: string
+          uploaded_by: string
+        }
+        Update: {
+          file_name?: string
+          file_path?: string
+          finding_id?: string
+          id?: string
+          uploaded_at?: string
+          uploaded_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "finding_pocs_finding_id_fkey"
+            columns: ["finding_id"]
+            isOneToOne: false
+            referencedRelation: "findings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      findings: {
+        Row: {
+          affected_component: string | null
+          created_at: string
+          created_by: string
+          cvss_score: number | null
+          cwe_id: string | null
+          description: string | null
+          id: string
+          impact: string | null
+          project_id: string
+          remediation: string | null
+          severity: string
+          status: string | null
+          steps_to_reproduce: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          affected_component?: string | null
+          created_at?: string
+          created_by: string
+          cvss_score?: number | null
+          cwe_id?: string | null
+          description?: string | null
+          id?: string
+          impact?: string | null
+          project_id: string
+          remediation?: string | null
+          severity: string
+          status?: string | null
+          steps_to_reproduce?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          affected_component?: string | null
+          created_at?: string
+          created_by?: string
+          cvss_score?: number | null
+          cwe_id?: string | null
+          description?: string | null
+          id?: string
+          impact?: string | null
+          project_id?: string
+          remediation?: string | null
+          severity?: string
+          status?: string | null
+          steps_to_reproduce?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "findings_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          full_name: string | null
+          id: string
+          user_id: string
+          username: string
+        }
+        Insert: {
+          created_at?: string
+          full_name?: string | null
+          id?: string
+          user_id: string
+          username: string
+        }
+        Update: {
+          created_at?: string
+          full_name?: string | null
+          id?: string
+          user_id?: string
+          username?: string
+        }
+        Relationships: []
+      }
+      project_assignments: {
+        Row: {
+          assigned_at: string
+          id: string
+          project_id: string
+          user_id: string
+        }
+        Insert: {
+          assigned_at?: string
+          id?: string
+          project_id: string
+          user_id: string
+        }
+        Update: {
+          assigned_at?: string
+          id?: string
+          project_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_assignments_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      projects: {
+        Row: {
+          client: string
+          created_at: string
+          created_by: string | null
+          domain: string | null
+          end_date: string | null
+          id: string
+          ip_addresses: string[] | null
+          name: string
+          start_date: string | null
+          status: string | null
+        }
+        Insert: {
+          client: string
+          created_at?: string
+          created_by?: string | null
+          domain?: string | null
+          end_date?: string | null
+          id?: string
+          ip_addresses?: string[] | null
+          name: string
+          start_date?: string | null
+          status?: string | null
+        }
+        Update: {
+          client?: string
+          created_at?: string
+          created_by?: string | null
+          domain?: string | null
+          end_date?: string | null
+          id?: string
+          ip_addresses?: string[] | null
+          name?: string
+          start_date?: string | null
+          status?: string | null
+        }
+        Relationships: []
+      }
+      user_roles: {
+        Row: {
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
+      is_assigned_to_project: {
+        Args: { _project_id: string; _user_id: string }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "manager" | "tester"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +366,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "manager", "tester"],
+    },
   },
 } as const

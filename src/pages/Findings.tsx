@@ -1,12 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { findings as initialFindings, projects, users } from '@/data/mockData';
 import { useAuth } from '@/contexts/AuthContext';
-import { Severity, Finding } from '@/types';
+import { supabase } from '@/integrations/supabase/client';
 import {
   Search,
   Plus,
@@ -14,6 +13,9 @@ import {
   ChevronDown,
   ChevronUp,
   AlertTriangle,
+  Trash2,
+  Upload,
+  Image as ImageIcon,
   X,
 } from 'lucide-react';
 import {
@@ -35,16 +37,61 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 
+type Severity = 'Critical' | 'High' | 'Medium' | 'Low' | 'Informational';
+
+interface Finding {
+  id: string;
+  project_id: string;
+  title: string;
+  severity: Severity;
+  description: string | null;
+  impact: string | null;
+  remediation: string | null;
+  steps_to_reproduce: string | null;
+  affected_component: string | null;
+  cvss_score: number | null;
+  cwe_id: string | null;
+  status: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface FindingPoc {
+  id: string;
+  finding_id: string;
+  file_path: string;
+  file_name: string;
+  uploaded_by: string;
+  uploaded_at: string;
+}
+
+interface Project {
+  id: string;
+  name: string;
+  client: string;
+}
+
+interface Profile {
+  user_id: string;
+  username: string;
+}
+
 export default function Findings() {
-  const { user } = useAuth();
+  const { user, role } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [severityFilter, setSeverityFilter] = useState<string>('all');
   const [projectFilter, setProjectFilter] = useState<string>('all');
   const [expandedFinding, setExpandedFinding] = useState<string | null>(null);
-  const [findingsList, setFindingsList] = useState<Finding[]>(initialFindings);
+  const [findings, setFindings] = useState<Finding[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [pocs, setPocs] = useState<Record<string, FindingPoc[]>>({});
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadingFindingId, setUploadingFindingId] = useState<string | null>(null);
 
-  // Form state
   const [formData, setFormData] = useState({
     projectId: '',
     severity: '' as Severity | '',
@@ -53,38 +100,80 @@ export default function Findings() {
     stepsToReproduce: '',
     impact: '',
     remediation: '',
-    affectedAssets: '',
+    affectedComponent: '',
     cvssScore: '',
+    cweId: '',
   });
 
-  const userProjects = user?.role === 'tester'
-    ? projects.filter(p => p.assignedTesters.includes(user.id))
-    : projects;
+  useEffect(() => {
+    fetchData();
+  }, [user]);
 
-  const userFindings = findingsList.filter(f => 
-    userProjects.some(p => p.id === f.projectId)
-  );
+  const fetchData = async () => {
+    if (!user) return;
+    setIsLoading(true);
 
-  const filteredFindings = userFindings.filter((finding) => {
+    const [projectsRes, findingsRes, profilesRes] = await Promise.all([
+      supabase.from('projects').select('id, name, client'),
+      supabase.from('findings').select('*').order('created_at', { ascending: false }),
+      supabase.from('profiles').select('user_id, username'),
+    ]);
+
+    if (projectsRes.data) setProjects(projectsRes.data);
+    if (findingsRes.data) {
+      setFindings(findingsRes.data as Finding[]);
+      // Fetch POCs for all findings
+      const findingIds = findingsRes.data.map(f => f.id);
+      if (findingIds.length > 0) {
+        const { data: pocsData } = await supabase
+          .from('finding_pocs')
+          .select('*')
+          .in('finding_id', findingIds);
+        
+        if (pocsData) {
+          const pocsByFinding: Record<string, FindingPoc[]> = {};
+          pocsData.forEach(poc => {
+            if (!pocsByFinding[poc.finding_id]) {
+              pocsByFinding[poc.finding_id] = [];
+            }
+            pocsByFinding[poc.finding_id].push(poc as FindingPoc);
+          });
+          setPocs(pocsByFinding);
+        }
+      }
+    }
+    if (profilesRes.data) setProfiles(profilesRes.data);
+    
+    setIsLoading(false);
+  };
+
+  const filteredFindings = findings.filter((finding) => {
     const matchesSearch =
       finding.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      finding.description.toLowerCase().includes(searchQuery.toLowerCase());
+      (finding.description?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false);
     const matchesSeverity = severityFilter === 'all' || finding.severity === severityFilter;
-    const matchesProject = projectFilter === 'all' || finding.projectId === projectFilter;
+    const matchesProject = projectFilter === 'all' || finding.project_id === projectFilter;
     return matchesSearch && matchesSeverity && matchesProject;
   });
 
   const getSeverityBadge = (severity: Severity) => {
-    return <Badge variant={severity}>{severity}</Badge>;
+    const variants: Record<Severity, 'destructive' | 'secondary' | 'outline'> = {
+      Critical: 'destructive',
+      High: 'destructive',
+      Medium: 'secondary',
+      Low: 'outline',
+      Informational: 'outline',
+    };
+    return <Badge variant={variants[severity]}>{severity}</Badge>;
   };
 
   const getSeverityIcon = (severity: Severity) => {
     const colors: Record<Severity, string> = {
-      critical: 'text-red-500',
-      high: 'text-orange-500',
-      medium: 'text-yellow-500',
-      low: 'text-green-500',
-      info: 'text-blue-500',
+      Critical: 'text-red-500',
+      High: 'text-orange-500',
+      Medium: 'text-yellow-500',
+      Low: 'text-green-500',
+      Informational: 'text-blue-500',
     };
     return <AlertTriangle className={`h-5 w-5 ${colors[severity]}`} />;
   };
@@ -98,12 +187,13 @@ export default function Findings() {
       stepsToReproduce: '',
       impact: '',
       remediation: '',
-      affectedAssets: '',
+      affectedComponent: '',
       cvssScore: '',
+      cweId: '',
     });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!formData.projectId || !formData.severity || !formData.title || !formData.description) {
@@ -111,28 +201,140 @@ export default function Findings() {
       return;
     }
 
-    const newFinding: Finding = {
-      id: `TECH-${String(findingsList.length + 1).padStart(3, '0')}`,
-      projectId: formData.projectId,
+    if (!user) {
+      toast.error('You must be logged in');
+      return;
+    }
+
+    const { data, error } = await supabase.from('findings').insert({
+      project_id: formData.projectId,
       title: formData.title,
       description: formData.description,
-      severity: formData.severity as Severity,
-      status: 'open',
-      stepsToReproduce: formData.stepsToReproduce,
-      impact: formData.impact,
-      remediation: formData.remediation,
-      affectedAssets: formData.affectedAssets.split(',').map(a => a.trim()).filter(a => a),
-      cvssScore: formData.cvssScore ? parseFloat(formData.cvssScore) : undefined,
-      reportedBy: user?.id || '3',
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
+      severity: formData.severity,
+      steps_to_reproduce: formData.stepsToReproduce || null,
+      impact: formData.impact || null,
+      remediation: formData.remediation || null,
+      affected_component: formData.affectedComponent || null,
+      cvss_score: formData.cvssScore ? parseFloat(formData.cvssScore) : null,
+      cwe_id: formData.cweId || null,
+      created_by: user.id,
+    }).select().single();
 
-    setFindingsList([newFinding, ...findingsList]);
+    if (error) {
+      toast.error('Failed to add finding: ' + error.message);
+      return;
+    }
+
+    setFindings([data as Finding, ...findings]);
     toast.success('Finding added successfully!');
     resetForm();
     setDialogOpen(false);
   };
+
+  const handleDelete = async (findingId: string) => {
+    const finding = findings.find(f => f.id === findingId);
+    if (!finding || finding.created_by !== user?.id) {
+      toast.error('You can only delete your own findings');
+      return;
+    }
+
+    const { error } = await supabase.from('findings').delete().eq('id', findingId);
+    
+    if (error) {
+      toast.error('Failed to delete finding');
+      return;
+    }
+
+    setFindings(findings.filter(f => f.id !== findingId));
+    toast.success('Finding deleted');
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, findingId: string) => {
+    const files = e.target.files;
+    if (!files || files.length === 0 || !user) return;
+
+    const file = files[0];
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png'];
+    
+    if (!allowedTypes.includes(file.type)) {
+      toast.error('Only JPEG, JPG, and PNG files are allowed');
+      return;
+    }
+
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${user.id}/${findingId}/${Date.now()}.${fileExt}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('poc-images')
+      .upload(fileName, file);
+
+    if (uploadError) {
+      toast.error('Failed to upload POC: ' + uploadError.message);
+      return;
+    }
+
+    const { data: urlData } = supabase.storage.from('poc-images').getPublicUrl(fileName);
+
+    const { data: pocData, error: pocError } = await supabase.from('finding_pocs').insert({
+      finding_id: findingId,
+      file_path: urlData.publicUrl,
+      file_name: file.name,
+      uploaded_by: user.id,
+    }).select().single();
+
+    if (pocError) {
+      toast.error('Failed to save POC reference');
+      return;
+    }
+
+    setPocs(prev => ({
+      ...prev,
+      [findingId]: [...(prev[findingId] || []), pocData as FindingPoc],
+    }));
+
+    toast.success('POC uploaded successfully!');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    setUploadingFindingId(null);
+  };
+
+  const handleDeletePoc = async (poc: FindingPoc) => {
+    if (poc.uploaded_by !== user?.id) {
+      toast.error('You can only delete your own POCs');
+      return;
+    }
+
+    const { error } = await supabase.from('finding_pocs').delete().eq('id', poc.id);
+    
+    if (error) {
+      toast.error('Failed to delete POC');
+      return;
+    }
+
+    setPocs(prev => ({
+      ...prev,
+      [poc.finding_id]: prev[poc.finding_id]?.filter(p => p.id !== poc.id) || [],
+    }));
+
+    toast.success('POC deleted');
+  };
+
+  const getUsername = (userId: string) => {
+    return profiles.find(p => p.user_id === userId)?.username || 'Unknown';
+  };
+
+  const getProjectName = (projectId: string) => {
+    return projects.find(p => p.id === projectId)?.name || 'Unknown Project';
+  };
+
+  if (isLoading) {
+    return (
+      <DashboardLayout title="Findings" description="Loading...">
+        <div className="flex items-center justify-center h-64">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout
@@ -158,22 +360,21 @@ export default function Findings() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Severity</SelectItem>
-              <SelectItem value="critical">Critical</SelectItem>
-              <SelectItem value="high">High</SelectItem>
-              <SelectItem value="medium">Medium</SelectItem>
-              <SelectItem value="low">Low</SelectItem>
-              <SelectItem value="info">Info</SelectItem>
+              <SelectItem value="Critical">Critical</SelectItem>
+              <SelectItem value="High">High</SelectItem>
+              <SelectItem value="Medium">Medium</SelectItem>
+              <SelectItem value="Low">Low</SelectItem>
+              <SelectItem value="Informational">Informational</SelectItem>
             </SelectContent>
           </Select>
-          {/* Project Filter - for managers and admins */}
-          {(user?.role === 'manager' || user?.role === 'admin') && (
+          {(role === 'manager' || role === 'admin') && (
             <Select value={projectFilter} onValueChange={setProjectFilter}>
               <SelectTrigger className="w-full sm:w-48 bg-secondary/50">
                 <SelectValue placeholder="Filter by Project" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Projects</SelectItem>
-                {userProjects.map(p => (
+                {projects.map(p => (
                   <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                 ))}
               </SelectContent>
@@ -181,7 +382,7 @@ export default function Findings() {
           )}
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
-              <Button variant="gradient">
+              <Button variant="default" className="gradient-technieum">
                 <Plus className="h-4 w-4 mr-2" />
                 Add Finding
               </Button>
@@ -202,7 +403,7 @@ export default function Findings() {
                         <SelectValue placeholder="Select project" />
                       </SelectTrigger>
                       <SelectContent>
-                        {userProjects.map(p => (
+                        {projects.map(p => (
                           <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                         ))}
                       </SelectContent>
@@ -218,11 +419,11 @@ export default function Findings() {
                         <SelectValue placeholder="Select severity" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="critical">Critical</SelectItem>
-                        <SelectItem value="high">High</SelectItem>
-                        <SelectItem value="medium">Medium</SelectItem>
-                        <SelectItem value="low">Low</SelectItem>
-                        <SelectItem value="info">Informational</SelectItem>
+                        <SelectItem value="Critical">Critical</SelectItem>
+                        <SelectItem value="High">High</SelectItem>
+                        <SelectItem value="Medium">Medium</SelectItem>
+                        <SelectItem value="Low">Low</SelectItem>
+                        <SelectItem value="Informational">Informational</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -249,6 +450,24 @@ export default function Findings() {
                     />
                   </div>
                 </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Affected Component</Label>
+                    <Input 
+                      placeholder="e.g., /api/users" 
+                      value={formData.affectedComponent}
+                      onChange={(e) => setFormData({ ...formData, affectedComponent: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>CWE ID</Label>
+                    <Input 
+                      placeholder="e.g., CWE-79" 
+                      value={formData.cweId}
+                      onChange={(e) => setFormData({ ...formData, cweId: e.target.value })}
+                    />
+                  </div>
+                </div>
                 <div className="space-y-2">
                   <Label>Description *</Label>
                   <Textarea 
@@ -256,14 +475,6 @@ export default function Findings() {
                     rows={3}
                     value={formData.description}
                     onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Affected Assets (comma-separated)</Label>
-                  <Input 
-                    placeholder="e.g., /api/users, /api/admin" 
-                    value={formData.affectedAssets}
-                    onChange={(e) => setFormData({ ...formData, affectedAssets: e.target.value })}
                   />
                 </div>
                 <div className="space-y-2">
@@ -297,7 +508,7 @@ export default function Findings() {
                   <DialogClose asChild>
                     <Button type="button" variant="outline" onClick={resetForm}>Cancel</Button>
                   </DialogClose>
-                  <Button type="submit" variant="gradient">Submit Finding</Button>
+                  <Button type="submit" className="gradient-technieum">Submit Finding</Button>
                 </div>
               </form>
             </DialogContent>
@@ -306,16 +517,16 @@ export default function Findings() {
 
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          {['critical', 'high', 'medium', 'low', 'info'].map((severity) => {
-            const count = userFindings.filter(f => f.severity === severity).length;
+          {(['Critical', 'High', 'Medium', 'Low', 'Informational'] as Severity[]).map((severity) => {
+            const count = findings.filter(f => f.severity === severity).length;
             return (
               <Card key={severity} className="p-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-2xl font-bold">{count}</p>
-                    <p className="text-xs text-muted-foreground capitalize">{severity}</p>
+                    <p className="text-xs text-muted-foreground">{severity}</p>
                   </div>
-                  {getSeverityIcon(severity as Severity)}
+                  {getSeverityIcon(severity)}
                 </div>
               </Card>
             );
@@ -325,14 +536,13 @@ export default function Findings() {
         {/* Findings List */}
         <div className="space-y-3">
           {filteredFindings.map((finding, index) => {
-            const project = projects.find(p => p.id === finding.projectId);
-            const reporter = users.find(u => u.id === finding.reportedBy);
             const isExpanded = expandedFinding === finding.id;
+            const canDelete = finding.created_by === user?.id;
+            const findingPocs = pocs[finding.id] || [];
 
             return (
               <Card
                 key={finding.id}
-                glow
                 className="animate-fade-in overflow-hidden"
                 style={{ animationDelay: `${index * 30}ms` }}
               >
@@ -345,18 +555,21 @@ export default function Findings() {
                       {getSeverityIcon(finding.severity)}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-3 flex-wrap">
-                          <Badge variant="outline" className="text-xs font-mono">
-                            {finding.id}
-                          </Badge>
                           {getSeverityBadge(finding.severity)}
-                          {finding.cvssScore && (
+                          {finding.cvss_score && (
                             <span className="text-sm font-mono text-muted-foreground">
-                              CVSS {finding.cvssScore}
+                              CVSS {finding.cvss_score}
                             </span>
                           )}
                           <Badge variant="secondary" className="text-xs">
-                            {project?.name}
+                            {getProjectName(finding.project_id)}
                           </Badge>
+                          {findingPocs.length > 0 && (
+                            <Badge variant="outline" className="text-xs">
+                              <ImageIcon className="h-3 w-3 mr-1" />
+                              {findingPocs.length} POC{findingPocs.length > 1 ? 's' : ''}
+                            </Badge>
+                          )}
                         </div>
                         <h3 className="font-semibold mt-2">{finding.title}</h3>
                         <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
@@ -365,9 +578,21 @@ export default function Findings() {
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <Badge variant={finding.status === 'open' ? 'destructive' : finding.status === 'remediated' ? 'active' : 'secondary'}>
+                      <Badge variant={finding.status === 'Open' ? 'destructive' : 'secondary'}>
                         {finding.status}
                       </Badge>
+                      {canDelete && (
+                        <Button 
+                          variant="ghost" 
+                          size="icon"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDelete(finding.id);
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      )}
                       {isExpanded ? (
                         <ChevronUp className="h-5 w-5 text-muted-foreground" />
                       ) : (
@@ -379,36 +604,109 @@ export default function Findings() {
 
                 {isExpanded && (
                   <div className="px-4 pb-4 pt-2 border-t border-border/50 space-y-4 animate-fade-in">
-                    <div>
-                      <h4 className="text-sm font-semibold text-primary mb-2">Steps to Reproduce</h4>
-                      <pre className="text-sm text-muted-foreground whitespace-pre-wrap font-mono bg-secondary/30 p-3 rounded-lg">
-                        {finding.stepsToReproduce}
-                      </pre>
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-semibold text-primary mb-2">Impact</h4>
-                      <p className="text-sm text-muted-foreground">{finding.impact}</p>
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-semibold text-primary mb-2">Remediation</h4>
-                      <pre className="text-sm text-muted-foreground whitespace-pre-wrap bg-secondary/30 p-3 rounded-lg">
-                        {finding.remediation}
-                      </pre>
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-semibold text-primary mb-2">Affected Assets</h4>
-                      <div className="flex flex-wrap gap-2">
-                        {finding.affectedAssets.map((asset, i) => (
-                          <Badge key={i} variant="secondary" className="font-mono text-xs">
-                            {asset}
-                          </Badge>
-                        ))}
+                    {finding.steps_to_reproduce && (
+                      <div>
+                        <h4 className="text-sm font-semibold text-primary mb-2">Steps to Reproduce</h4>
+                        <pre className="text-sm text-muted-foreground whitespace-pre-wrap font-mono bg-secondary/30 p-3 rounded-lg">
+                          {finding.steps_to_reproduce}
+                        </pre>
                       </div>
+                    )}
+                    {finding.impact && (
+                      <div>
+                        <h4 className="text-sm font-semibold text-primary mb-2">Impact</h4>
+                        <p className="text-sm text-muted-foreground">{finding.impact}</p>
+                      </div>
+                    )}
+                    {finding.remediation && (
+                      <div>
+                        <h4 className="text-sm font-semibold text-primary mb-2">Remediation</h4>
+                        <pre className="text-sm text-muted-foreground whitespace-pre-wrap bg-secondary/30 p-3 rounded-lg">
+                          {finding.remediation}
+                        </pre>
+                      </div>
+                    )}
+                    {finding.affected_component && (
+                      <div>
+                        <h4 className="text-sm font-semibold text-primary mb-2">Affected Component</h4>
+                        <Badge variant="secondary" className="font-mono text-xs">
+                          {finding.affected_component}
+                        </Badge>
+                      </div>
+                    )}
+                    {finding.cwe_id && (
+                      <div>
+                        <h4 className="text-sm font-semibold text-primary mb-2">CWE</h4>
+                        <Badge variant="outline" className="font-mono text-xs">
+                          {finding.cwe_id}
+                        </Badge>
+                      </div>
+                    )}
+                    
+                    {/* POC Images Section */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-sm font-semibold text-primary">Proof of Concept (POC)</h4>
+                        <div>
+                          <input
+                            type="file"
+                            ref={fileInputRef}
+                            className="hidden"
+                            accept=".jpg,.jpeg,.png"
+                            onChange={(e) => handleFileUpload(e, finding.id)}
+                          />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setUploadingFindingId(finding.id);
+                              fileInputRef.current?.click();
+                            }}
+                          >
+                            <Upload className="h-4 w-4 mr-1" />
+                            Upload POC
+                          </Button>
+                        </div>
+                      </div>
+                      {findingPocs.length > 0 ? (
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                          {findingPocs.map(poc => (
+                            <div key={poc.id} className="relative group">
+                              <img 
+                                src={poc.file_path} 
+                                alt={poc.file_name}
+                                className="rounded-lg border border-border/50 w-full h-32 object-cover cursor-pointer hover:opacity-80"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  window.open(poc.file_path, '_blank');
+                                }}
+                              />
+                              {poc.uploaded_by === user?.id && (
+                                <Button
+                                  variant="destructive"
+                                  size="icon"
+                                  className="absolute top-1 right-1 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeletePoc(poc);
+                                  }}
+                                >
+                                  <X className="h-3 w-3" />
+                                </Button>
+                              )}
+                              <p className="text-xs text-muted-foreground mt-1 truncate">{poc.file_name}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">No POC images uploaded yet.</p>
+                      )}
                     </div>
+
                     <div className="flex items-center gap-4 text-sm text-muted-foreground pt-2 border-t border-border/50">
-                      <span>Reported by: {reporter?.username}</span>
-                      <span>Created: {new Date(finding.createdAt).toLocaleDateString()}</span>
-                      <span>Updated: {new Date(finding.updatedAt).toLocaleDateString()}</span>
+                      <span>Reported by: {getUsername(finding.created_by)}</span>
+                      <span>Created: {new Date(finding.created_at).toLocaleDateString()}</span>
                     </div>
                   </div>
                 )}
