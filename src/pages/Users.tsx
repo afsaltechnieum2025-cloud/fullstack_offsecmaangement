@@ -17,6 +17,7 @@ import {
   UserPlus,
   Loader2,
   Plus,
+  Trash2,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -30,6 +31,8 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogDescription,
+  DialogFooter,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import {
@@ -39,6 +42,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 type AppRole = 'admin' | 'manager' | 'tester';
 
@@ -62,6 +75,9 @@ export default function Users() {
   const [isSaving, setIsSaving] = useState(false);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<UserWithRole | null>(null);
   const [newUser, setNewUser] = useState({
     email: '',
     password: '',
@@ -191,6 +207,40 @@ export default function Users() {
     } finally {
       setIsCreating(false);
     }
+  };
+
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
+
+    setIsDeleting(true);
+    try {
+      const response = await supabase.functions.invoke('delete-user', {
+        body: { userId: userToDelete.user_id },
+      });
+
+      if (response.error) {
+        throw new Error(response.error.message);
+      }
+
+      if (response.data?.error) {
+        throw new Error(response.data.error);
+      }
+
+      toast.success('User deleted successfully!');
+      setIsDeleteDialogOpen(false);
+      setUserToDelete(null);
+      fetchUsers();
+    } catch (error) {
+      console.error('Error deleting user:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to delete user');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const openDeleteDialog = (user: UserWithRole) => {
+    setUserToDelete(user);
+    setIsDeleteDialogOpen(true);
   };
 
   const filteredUsers = users.filter((u) =>
@@ -392,6 +442,13 @@ export default function Users() {
                       <DropdownMenuItem onClick={() => handleChangeRole(member)}>
                         Change Role
                       </DropdownMenuItem>
+                      <DropdownMenuItem 
+                        onClick={() => openDeleteDialog(member)}
+                        className="text-destructive focus:text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Delete User
+                      </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
@@ -457,6 +514,39 @@ export default function Users() {
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* Delete User Confirmation Dialog */}
+        <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete User</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete <strong>{userToDelete?.username}</strong>? 
+                This action cannot be undone. All of the user's data, including their profile and role, will be permanently removed.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+              <Button 
+                variant="destructive" 
+                onClick={handleDeleteUser}
+                disabled={isDeleting}
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete User
+                  </>
+                )}
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </DashboardLayout>
   );
