@@ -18,7 +18,10 @@ import {
   Loader2,
   Plus,
   Trash2,
+  FolderKanban,
+  X,
 } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -64,6 +67,18 @@ interface UserWithRole {
   role: AppRole | null;
 }
 
+interface Project {
+  id: string;
+  name: string;
+  client: string;
+}
+
+interface ProjectAssignment {
+  id: string;
+  project_id: string;
+  user_id: string;
+}
+
 export default function Users() {
   const { role, session } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
@@ -84,6 +99,12 @@ export default function Users() {
     username: '',
     role: 'tester' as AppRole,
   });
+  const [isProjectsDialogOpen, setIsProjectsDialogOpen] = useState(false);
+  const [selectedUserForProjects, setSelectedUserForProjects] = useState<UserWithRole | null>(null);
+  const [allProjects, setAllProjects] = useState<Project[]>([]);
+  const [userAssignments, setUserAssignments] = useState<ProjectAssignment[]>([]);
+  const [isLoadingProjects, setIsLoadingProjects] = useState(false);
+  const [isSavingAssignments, setIsSavingAssignments] = useState(false);
 
   // Only admins can access this page
   if (role !== 'admin') {
@@ -241,6 +262,80 @@ export default function Users() {
   const openDeleteDialog = (user: UserWithRole) => {
     setUserToDelete(user);
     setIsDeleteDialogOpen(true);
+  };
+
+  const openProjectsDialog = async (user: UserWithRole) => {
+    setSelectedUserForProjects(user);
+    setIsProjectsDialogOpen(true);
+    setIsLoadingProjects(true);
+
+    try {
+      // Fetch all projects
+      const { data: projects, error: projectsError } = await supabase
+        .from('projects')
+        .select('id, name, client')
+        .order('name');
+
+      if (projectsError) throw projectsError;
+      setAllProjects(projects || []);
+
+      // Fetch user's current assignments
+      const { data: assignments, error: assignmentsError } = await supabase
+        .from('project_assignments')
+        .select('*')
+        .eq('user_id', user.user_id);
+
+      if (assignmentsError) throw assignmentsError;
+      setUserAssignments(assignments || []);
+    } catch (error) {
+      console.error('Error fetching projects:', error);
+      toast.error('Failed to load projects');
+    } finally {
+      setIsLoadingProjects(false);
+    }
+  };
+
+  const toggleProjectAssignment = async (projectId: string, isAssigned: boolean) => {
+    if (!selectedUserForProjects) return;
+
+    setIsSavingAssignments(true);
+    try {
+      if (isAssigned) {
+        // Remove assignment
+        const { error } = await supabase
+          .from('project_assignments')
+          .delete()
+          .eq('user_id', selectedUserForProjects.user_id)
+          .eq('project_id', projectId);
+
+        if (error) throw error;
+        setUserAssignments(prev => prev.filter(a => a.project_id !== projectId));
+        toast.success('Project unassigned');
+      } else {
+        // Add assignment
+        const { data, error } = await supabase
+          .from('project_assignments')
+          .insert({
+            user_id: selectedUserForProjects.user_id,
+            project_id: projectId,
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+        setUserAssignments(prev => [...prev, data]);
+        toast.success('Project assigned');
+      }
+    } catch (error) {
+      console.error('Error updating assignment:', error);
+      toast.error('Failed to update assignment');
+    } finally {
+      setIsSavingAssignments(false);
+    }
+  };
+
+  const isProjectAssigned = (projectId: string) => {
+    return userAssignments.some(a => a.project_id === projectId);
   };
 
   const filteredUsers = users.filter((u) =>
@@ -442,6 +537,10 @@ export default function Users() {
                       <DropdownMenuItem onClick={() => handleChangeRole(member)}>
                         Change Role
                       </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => openProjectsDialog(member)}>
+                        <FolderKanban className="h-4 w-4 mr-2" />
+                        Manage Projects
+                      </DropdownMenuItem>
                       <DropdownMenuItem 
                         onClick={() => openDeleteDialog(member)}
                         className="text-destructive focus:text-destructive"
@@ -547,6 +646,67 @@ export default function Users() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        {/* Manage Projects Dialog */}
+        <Dialog open={isProjectsDialogOpen} onOpenChange={setIsProjectsDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>
+                Manage Projects for {selectedUserForProjects?.username}
+              </DialogTitle>
+              <DialogDescription>
+                Assign or unassign projects for this user
+              </DialogDescription>
+            </DialogHeader>
+            <div className="mt-4">
+              {isLoadingProjects ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : allProjects.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <FolderKanban className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                  <p>No projects available</p>
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-[300px] overflow-y-auto">
+                  {allProjects.map((project) => {
+                    const assigned = isProjectAssigned(project.id);
+                    return (
+                      <div
+                        key={project.id}
+                        className="flex items-center justify-between p-3 rounded-lg border bg-secondary/30 hover:bg-secondary/50 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <Checkbox
+                            id={project.id}
+                            checked={assigned}
+                            onCheckedChange={() => toggleProjectAssignment(project.id, assigned)}
+                            disabled={isSavingAssignments}
+                          />
+                          <div>
+                            <label
+                              htmlFor={project.id}
+                              className="font-medium cursor-pointer"
+                            >
+                              {project.name}
+                            </label>
+                            <p className="text-xs text-muted-foreground">{project.client}</p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <DialogFooter className="mt-4">
+              <Button variant="outline" onClick={() => setIsProjectsDialogOpen(false)}>
+                Done
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </DashboardLayout>
   );
