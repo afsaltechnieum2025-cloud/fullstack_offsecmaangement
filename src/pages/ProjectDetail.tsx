@@ -147,6 +147,26 @@ export default function ProjectDetail() {
   const handleGenerateTechnicalReport = async () => {
     if (!project) return;
     try {
+      // Fetch POC images for all findings
+      const findingIds = findings.map(f => f.id);
+      const pocImages: Record<string, string[]> = {};
+      
+      if (findingIds.length > 0) {
+        const { data: pocsData } = await supabase
+          .from('finding_pocs')
+          .select('finding_id, file_path')
+          .in('finding_id', findingIds);
+        
+        if (pocsData) {
+          pocsData.forEach(poc => {
+            if (!pocImages[poc.finding_id]) {
+              pocImages[poc.finding_id] = [];
+            }
+            pocImages[poc.finding_id].push(poc.file_path);
+          });
+        }
+      }
+
       // Transform data for report generator
       const reportProject = {
         id: project.id,
@@ -184,6 +204,7 @@ export default function ProjectDetail() {
           impact: f.impact || '',
           remediation: f.remediation || '',
           affectedAssets: f.affected_component ? [f.affected_component] : [],
+          evidence: pocImages[f.id] || [],
           status: (f.status?.toLowerCase() || 'open') as 'open' | 'remediated' | 'accepted' | 'false_positive',
           reportedBy: f.created_by,
           createdAt: new Date(f.created_at),
@@ -191,7 +212,8 @@ export default function ProjectDetail() {
         };
       });
 
-      await generateTechnicalReport(reportProject, reportFindings);
+      toast.info('Generating report with POC images... This may take a moment.');
+      await generateTechnicalReport(reportProject, reportFindings, pocImages);
       toast.success('Technical Report generated successfully!');
     } catch (error) {
       toast.error('Failed to generate report');

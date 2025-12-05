@@ -2,6 +2,7 @@ import { ReactNode, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import AppSidebar from '@/components/AppSidebar';
+import Footer from '@/components/Footer';
 import { Bell } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { notifications } from '@/data/mockData';
@@ -91,6 +92,9 @@ export default function DashboardLayout({ children, title, description }: Dashbo
         <main className="flex-1 p-6 overflow-auto">
           {children}
         </main>
+
+        {/* Footer */}
+        <Footer />
       </div>
     </div>
   );

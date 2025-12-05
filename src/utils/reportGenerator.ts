@@ -11,9 +11,62 @@ import {
   BorderStyle,
   Packer,
   PageBreak,
+  ImageRun,
 } from 'docx';
 import { saveAs } from 'file-saver';
 import { Project, Finding } from '@/types';
+
+// Fetch image and convert to base64
+const fetchImageAsBase64 = async (url: string): Promise<{ data: Uint8Array; width: number; height: number } | null> => {
+  try {
+    const response = await fetch(url);
+    const blob = await response.blob();
+    
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const img = new Image();
+        img.onload = () => {
+          // Calculate dimensions to fit within page width (max 500px width, maintain aspect ratio)
+          const maxWidth = 500;
+          const maxHeight = 350;
+          let width = img.width;
+          let height = img.height;
+          
+          if (width > maxWidth) {
+            height = (height * maxWidth) / width;
+            width = maxWidth;
+          }
+          if (height > maxHeight) {
+            width = (width * maxHeight) / height;
+            height = maxHeight;
+          }
+          
+          // Convert base64 to Uint8Array for browser compatibility
+          const base64Data = (reader.result as string).split(',')[1];
+          const binaryString = atob(base64Data);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          
+          resolve({
+            data: bytes,
+            width: Math.round(width),
+            height: Math.round(height),
+          });
+        };
+        img.onerror = () => resolve(null);
+        img.src = reader.result as string;
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch (error) {
+    console.error('Error fetching image:', error);
+    return null;
+  }
+};
 
 const formatDate = (date: Date) => {
   return new Date(date).toLocaleDateString('en-US', {
@@ -83,15 +136,67 @@ const getSeverityColor = (severity: string) => {
   return colors[severity] || '666666';
 };
 
-export const generateTechnicalReport = async (project: Project, projectFindings: Finding[]) => {
+export const generateTechnicalReport = async (project: Project, projectFindings: Finding[], pocImages?: Record<string, string[]>) => {
   const criticalCount = projectFindings.filter(f => f.severity === 'critical').length;
   const highCount = projectFindings.filter(f => f.severity === 'high').length;
   const mediumCount = projectFindings.filter(f => f.severity === 'medium').length;
   const lowCount = projectFindings.filter(f => f.severity === 'low').length;
 
-  const findingSections: Paragraph[] = [];
+  const findingSections: (Paragraph | Table)[] = [];
   
-  projectFindings.forEach((finding, index) => {
+  for (const finding of projectFindings) {
+    // Get POC images for this finding
+    const findingPocs = pocImages?.[finding.id] || finding.evidence || [];
+    const imageElements: (Paragraph | Table)[] = [];
+    
+    // Fetch and add POC images
+    if (findingPocs.length > 0) {
+      imageElements.push(
+        new Paragraph({
+          children: [new TextRun({ text: 'Proof of Concept (Evidence):', bold: true, size: 22, color: 'E85D04' })],
+          spacing: { before: 150, after: 100 },
+        })
+      );
+      
+      for (let i = 0; i < findingPocs.length; i++) {
+        const pocUrl = findingPocs[i];
+        const imageData = await fetchImageAsBase64(pocUrl);
+        
+        if (imageData) {
+          imageElements.push(
+            new Paragraph({
+              children: [
+                new TextRun({ text: `Evidence ${i + 1}:`, size: 20, italics: true }),
+              ],
+              spacing: { before: 100, after: 50 },
+            }),
+            new Paragraph({
+              children: [
+                new ImageRun({
+                  data: imageData.data,
+                  transformation: {
+                    width: imageData.width,
+                    height: imageData.height,
+                  },
+                  type: 'png',
+                }),
+              ],
+              spacing: { after: 150 },
+            })
+          );
+        } else {
+          imageElements.push(
+            new Paragraph({
+              children: [
+                new TextRun({ text: `[Evidence ${i + 1}: Image could not be loaded]`, size: 20, italics: true, color: '999999' }),
+              ],
+              spacing: { after: 100 },
+            })
+          );
+        }
+      }
+    }
+
     findingSections.push(
       new Paragraph({
         children: [new TextRun({ text: '', break: 1 })],
@@ -153,14 +258,15 @@ export const generateTechnicalReport = async (project: Project, projectFindings:
       }),
       new Paragraph({
         children: [new TextRun({ text: finding.remediation, size: 22 })],
-        spacing: { after: 200 },
+        spacing: { after: 150 },
       }),
+      ...imageElements,
       new Paragraph({
         children: [new TextRun({ text: '─'.repeat(80), color: 'CCCCCC' })],
         spacing: { after: 200 },
       }),
     );
-  });
+  }
 
   const doc = new Document({
     sections: [
