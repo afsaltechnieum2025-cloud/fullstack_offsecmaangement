@@ -77,8 +77,9 @@ export default function Login() {
           <div className="relative z-10 w-full max-w-md">
             <div className="text-center mb-8 animate-fade-in">
               <div className="flex justify-center mb-4">
-                <img src={logo} alt="Technieum" className="h-12 w-auto" />
+                <img src={logo} alt="Technieum" className="h-20 w-auto" />
               </div>
+              <h1 className="text-xl font-semibold text-gradient">OffSec Operations</h1>
             </div>
 
             <Card className="border-border/50 bg-card/80 backdrop-blur-xl animate-slide-up">
@@ -177,9 +178,9 @@ export default function Login() {
       {/* Footer */}
       <footer className="border-t border-border/50 bg-background/80 backdrop-blur-sm py-4 px-6">
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <img src={logo} alt="Technieum" className="h-6 w-auto" />
-            <span className="text-sm text-muted-foreground">OffSec Operations</span>
+          <div className="flex items-center gap-3">
+            <img src={logo} alt="Technieum" className="h-10 w-auto" />
+            <span className="text-sm font-medium text-muted-foreground">OffSec Operations</span>
           </div>
           <p className="text-xs text-muted-foreground">
             © {currentYear} Technieum. All rights reserved.
