@@ -142,6 +142,10 @@ export const generateTechnicalReport = async (project: Project, projectFindings:
   const mediumCount = projectFindings.filter(f => f.severity === 'medium').length;
   const lowCount = projectFindings.filter(f => f.severity === 'low').length;
 
+  // Fetch logo for report header
+  const logoUrl = `${window.location.origin}/technieum-logo.png`;
+  const logoData = await fetchImageAsBase64(logoUrl);
+
   const findingSections: (Paragraph | Table)[] = [];
   
   for (const finding of projectFindings) {
@@ -272,7 +276,23 @@ export const generateTechnicalReport = async (project: Project, projectFindings:
     sections: [
       {
         children: [
-          // Title Page
+          // Title Page with Logo
+          ...(logoData ? [
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [
+                new ImageRun({
+                  data: logoData.data,
+                  transformation: {
+                    width: 180,
+                    height: Math.round(180 * (logoData.height / logoData.width)),
+                  },
+                  type: 'png',
+                }),
+              ],
+              spacing: { before: 600, after: 200 },
+            }),
+          ] : []),
           new Paragraph({
             alignment: AlignmentType.CENTER,
             children: [
@@ -283,7 +303,7 @@ export const generateTechnicalReport = async (project: Project, projectFindings:
                 color: 'E85D04',
               }),
             ],
-            spacing: { before: 1000, after: 100 },
+            spacing: { before: logoData ? 100 : 1000, after: 100 },
           }),
           new Paragraph({
             alignment: AlignmentType.CENTER,
@@ -581,11 +601,31 @@ export const generateManagementReport = async (project: Project, projectFindings
 
   const riskLevel = criticalCount > 10 ? 'CRITICAL' : criticalCount > 5 ? 'HIGH RISK' : highCount > 5 ? 'MODERATE RISK' : 'LOW RISK';
 
+  // Fetch logo for report header
+  const logoUrl = `${window.location.origin}/technieum-logo.png`;
+  const logoData = await fetchImageAsBase64(logoUrl);
+
   const doc = new Document({
     sections: [
       {
         children: [
-          // Title Page
+          // Title Page with Logo
+          ...(logoData ? [
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [
+                new ImageRun({
+                  data: logoData.data,
+                  transformation: {
+                    width: 180,
+                    height: Math.round(180 * (logoData.height / logoData.width)),
+                  },
+                  type: 'png',
+                }),
+              ],
+              spacing: { before: 600, after: 200 },
+            }),
+          ] : []),
           new Paragraph({
             alignment: AlignmentType.CENTER,
             children: [
@@ -596,7 +636,7 @@ export const generateManagementReport = async (project: Project, projectFindings
                 color: 'E85D04',
               }),
             ],
-            spacing: { before: 1000, after: 100 },
+            spacing: { before: logoData ? 100 : 1000, after: 100 },
           }),
           new Paragraph({
             alignment: AlignmentType.CENTER,

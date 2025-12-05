@@ -50,8 +50,8 @@ export default function AppSidebar() {
       {/* Logo */}
       <div className="flex items-center justify-between p-4 border-b border-border/50">
         {!collapsed && (
-          <Link to="/dashboard" className="flex items-center gap-2">
-            <img src={logo} alt="Technieum" className="h-8 w-auto" />
+          <Link to="/dashboard" className="flex items-center gap-3">
+            <img src={logo} alt="Technieum" className="h-12 w-auto" />
             <div className="flex flex-col">
               <span className="font-bold text-sm text-gradient">OffSec Ops</span>
             </div>
@@ -59,7 +59,7 @@ export default function AppSidebar() {
         )}
         {collapsed && (
           <Link to="/dashboard">
-            <img src={logo} alt="Technieum" className="h-8 w-auto mx-auto" />
+            <img src={logo} alt="Technieum" className="h-10 w-auto mx-auto" />
           </Link>
         )}
         <Button
