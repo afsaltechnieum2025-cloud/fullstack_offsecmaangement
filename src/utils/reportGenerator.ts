@@ -12,6 +12,7 @@ import {
   Packer,
   PageBreak,
   ImageRun,
+  Header,
 } from 'docx';
 import { saveAs } from 'file-saver';
 import { Project, Finding } from '@/types';
@@ -272,9 +273,56 @@ export const generateTechnicalReport = async (project: Project, projectFindings:
     );
   }
 
+  // Create header with logo for all pages
+  const headerChildren = logoData ? [
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [
+        new ImageRun({
+          data: logoData.data,
+          transformation: {
+            width: 120,
+            height: Math.round(120 * (logoData.height / logoData.width)),
+          },
+          type: 'png',
+        }),
+      ],
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [
+        new TextRun({
+          text: 'TECHNIEUM SECURITY ASSESSMENT',
+          bold: true,
+          size: 18,
+          color: 'E85D04',
+        }),
+      ],
+      spacing: { after: 100 },
+    }),
+  ] : [
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [
+        new TextRun({
+          text: 'TECHNIEUM SECURITY ASSESSMENT',
+          bold: true,
+          size: 18,
+          color: 'E85D04',
+        }),
+      ],
+      spacing: { after: 100 },
+    }),
+  ];
+
   const doc = new Document({
     sections: [
       {
+        headers: {
+          default: new Header({
+            children: headerChildren,
+          }),
+        },
         children: [
           // Title Page with Logo
           ...(logoData ? [
@@ -290,7 +338,7 @@ export const generateTechnicalReport = async (project: Project, projectFindings:
                   type: 'png',
                 }),
               ],
-              spacing: { before: 600, after: 200 },
+              spacing: { before: 400, after: 200 },
             }),
           ] : []),
           new Paragraph({
@@ -303,7 +351,7 @@ export const generateTechnicalReport = async (project: Project, projectFindings:
                 color: 'E85D04',
               }),
             ],
-            spacing: { before: logoData ? 100 : 1000, after: 100 },
+            spacing: { before: logoData ? 100 : 800, after: 100 },
           }),
           new Paragraph({
             alignment: AlignmentType.CENTER,
@@ -605,9 +653,56 @@ export const generateManagementReport = async (project: Project, projectFindings
   const logoUrl = `${window.location.origin}/technieum-logo.png`;
   const logoData = await fetchImageAsBase64(logoUrl);
 
+  // Create header with logo for all pages
+  const headerChildren = logoData ? [
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [
+        new ImageRun({
+          data: logoData.data,
+          transformation: {
+            width: 120,
+            height: Math.round(120 * (logoData.height / logoData.width)),
+          },
+          type: 'png',
+        }),
+      ],
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [
+        new TextRun({
+          text: 'TECHNIEUM EXECUTIVE SUMMARY',
+          bold: true,
+          size: 18,
+          color: 'E85D04',
+        }),
+      ],
+      spacing: { after: 100 },
+    }),
+  ] : [
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [
+        new TextRun({
+          text: 'TECHNIEUM EXECUTIVE SUMMARY',
+          bold: true,
+          size: 18,
+          color: 'E85D04',
+        }),
+      ],
+      spacing: { after: 100 },
+    }),
+  ];
+
   const doc = new Document({
     sections: [
       {
+        headers: {
+          default: new Header({
+            children: headerChildren,
+          }),
+        },
         children: [
           // Title Page with Logo
           ...(logoData ? [
@@ -623,7 +718,7 @@ export const generateManagementReport = async (project: Project, projectFindings
                   type: 'png',
                 }),
               ],
-              spacing: { before: 600, after: 200 },
+              spacing: { before: 400, after: 200 },
             }),
           ] : []),
           new Paragraph({
@@ -636,7 +731,7 @@ export const generateManagementReport = async (project: Project, projectFindings
                 color: 'E85D04',
               }),
             ],
-            spacing: { before: logoData ? 100 : 1000, after: 100 },
+            spacing: { before: logoData ? 100 : 800, after: 100 },
           }),
           new Paragraph({
             alignment: AlignmentType.CENTER,
