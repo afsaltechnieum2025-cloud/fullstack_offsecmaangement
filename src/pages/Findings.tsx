@@ -17,6 +17,7 @@ import {
   Upload,
   Image as ImageIcon,
   X,
+  RefreshCw,
 } from 'lucide-react';
 import {
   Select,
@@ -55,7 +56,13 @@ interface Finding {
   created_by: string;
   created_at: string;
   updated_at: string;
+  retest_status: string | null;
+  retest_date: string | null;
+  retest_notes: string | null;
+  retested_by: string | null;
 }
+
+type RetestStatus = 'Open' | 'Fixed' | 'Not Fixed';
 
 interface FindingPoc {
   id: string;
@@ -326,6 +333,49 @@ export default function Findings() {
     return projects.find(p => p.id === projectId)?.name || 'Unknown Project';
   };
 
+  const handleUpdateRetestStatus = async (findingId: string, status: RetestStatus) => {
+    if (!user) {
+      toast.error('You must be logged in');
+      return;
+    }
+
+    const { error } = await supabase
+      .from('findings')
+      .update({
+        retest_status: status,
+        retest_date: new Date().toISOString(),
+        retested_by: user.id,
+      })
+      .eq('id', findingId);
+
+    if (error) {
+      toast.error('Failed to update retest status: ' + error.message);
+      return;
+    }
+
+    setFindings(findings.map(f => 
+      f.id === findingId 
+        ? { ...f, retest_status: status, retest_date: new Date().toISOString(), retested_by: user.id }
+        : f
+    ));
+    toast.success(`Retest status updated to "${status}"`);
+  };
+
+  const getRetestBadge = (status: string | null) => {
+    if (!status) return null;
+    const variants: Record<string, 'destructive' | 'secondary' | 'outline'> = {
+      'Open': 'destructive',
+      'Fixed': 'outline',
+      'Not Fixed': 'secondary',
+    };
+    return (
+      <Badge variant={variants[status] || 'secondary'} className="ml-2">
+        <RefreshCw className="h-3 w-3 mr-1" />
+        {status}
+      </Badge>
+    );
+  };
+
   if (isLoading) {
     return (
       <DashboardLayout title="Findings" description="Loading...">
@@ -581,6 +631,7 @@ export default function Findings() {
                       <Badge variant={finding.status === 'Open' ? 'destructive' : 'secondary'}>
                         {finding.status}
                       </Badge>
+                      {finding.retest_status && getRetestBadge(finding.retest_status)}
                       {canDelete && (
                         <Button 
                           variant="ghost" 
@@ -702,6 +753,49 @@ export default function Findings() {
                       ) : (
                         <p className="text-sm text-muted-foreground">No POC images uploaded yet.</p>
                       )}
+                    </div>
+
+                    {/* Retest Status Section */}
+                    <div className="pt-2 border-t border-border/50">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="text-sm font-semibold text-primary mb-1">Retest Status</h4>
+                          <div className="flex items-center gap-2">
+                            {finding.retest_status ? (
+                              <>
+                                {getRetestBadge(finding.retest_status)}
+                                {finding.retest_date && (
+                                  <span className="text-xs text-muted-foreground ml-2">
+                                    Last tested: {new Date(finding.retest_date).toLocaleDateString()}
+                                  </span>
+                                )}
+                                {finding.retested_by && (
+                                  <span className="text-xs text-muted-foreground">
+                                    by {getUsername(finding.retested_by)}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-sm text-muted-foreground">Not retested yet</span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+                          <Select
+                            value={finding.retest_status || ''}
+                            onValueChange={(value) => handleUpdateRetestStatus(finding.id, value as RetestStatus)}
+                          >
+                            <SelectTrigger className="w-32 h-8 text-xs">
+                              <SelectValue placeholder="Update status" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="Open">Open</SelectItem>
+                              <SelectItem value="Fixed">Fixed</SelectItem>
+                              <SelectItem value="Not Fixed">Not Fixed</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-4 text-sm text-muted-foreground pt-2 border-t border-border/50">
