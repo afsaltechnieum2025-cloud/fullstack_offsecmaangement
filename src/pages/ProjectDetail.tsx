@@ -19,8 +19,9 @@ import {
   Plus,
   Loader2,
   ChevronRight,
+  RefreshCw,
 } from 'lucide-react';
-import { generateTechnicalReport, generateManagementReport } from '@/utils/reportGenerator';
+import { generateTechnicalReport, generateManagementReport, generateRetestReport } from '@/utils/reportGenerator';
 import FindingDetailDialog from '@/components/FindingDetailDialog';
 
 type Project = {
@@ -49,6 +50,10 @@ type Finding = {
   remediation: string | null;
   affected_component: string | null;
   cwe_id: string | null;
+  retest_status: string | null;
+  retest_date: string | null;
+  retest_notes: string | null;
+  retested_by: string | null;
 };
 
 type Profile = {
@@ -271,6 +276,43 @@ export default function ProjectDetail() {
       toast.success('Management Report generated successfully!');
     } catch (error) {
       toast.error('Failed to generate report');
+      console.error(error);
+    }
+  };
+
+  const handleGenerateRetestReport = async () => {
+    if (!project) return;
+    try {
+      const reportProject = {
+        id: project.id,
+        name: project.name,
+        description: '',
+        client: project.client,
+        targetDomain: project.domain || '',
+        targetIPs: project.ip_addresses || [],
+        credentials: [],
+        assignedTesters: [],
+        managerId: '',
+        status: (project.status || 'active') as 'active' | 'completed' | 'pending' | 'overdue',
+        startDate: project.start_date ? new Date(project.start_date) : new Date(),
+        endDate: project.end_date ? new Date(project.end_date) : new Date(),
+        createdAt: new Date(project.created_at),
+        findings: [],
+      };
+      
+      const retestFindings = findings.map(f => ({
+        id: f.id,
+        title: f.title,
+        severity: f.severity.toLowerCase(),
+        status: f.status || 'Open',
+        retest_status: f.retest_status,
+        retest_date: f.retest_date,
+      }));
+
+      await generateRetestReport(reportProject, retestFindings);
+      toast.success('Retest Report generated successfully!');
+    } catch (error) {
+      toast.error('Failed to generate retest report');
       console.error(error);
     }
   };
@@ -555,6 +597,48 @@ export default function ProjectDetail() {
                   </CardContent>
                 </Card>
               </div>
+
+              <Card glow>
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <RefreshCw className="h-5 w-5 text-primary" />
+                    Retest Report
+                  </CardTitle>
+                  <CardDescription>
+                    Summary of remediation progress showing fixed vs. not fixed findings
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">Fixed:</span>
+                      <Badge variant="outline" className="bg-green-500/10 text-green-600">
+                        {findings.filter(f => f.retest_status === 'Fixed').length}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">Not Fixed:</span>
+                      <Badge variant="destructive">
+                        {findings.filter(f => f.retest_status === 'Not Fixed').length}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">Open:</span>
+                      <Badge variant="secondary">
+                        {findings.filter(f => !f.retest_status || f.retest_status === 'Open').length}
+                      </Badge>
+                    </div>
+                  </div>
+                  <Button 
+                    variant="outline" 
+                    className="w-full"
+                    onClick={handleGenerateRetestReport}
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    Generate Retest Report
+                  </Button>
+                </CardContent>
+              </Card>
             </TabsContent>
           )}
         </Tabs>

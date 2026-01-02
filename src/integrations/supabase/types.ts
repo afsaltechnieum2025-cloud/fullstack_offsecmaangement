@@ -61,6 +61,10 @@ export type Database = {
           impact: string | null
           project_id: string
           remediation: string | null
+          retest_date: string | null
+          retest_notes: string | null
+          retest_status: string | null
+          retested_by: string | null
           severity: string
           status: string | null
           steps_to_reproduce: string | null
@@ -78,6 +82,10 @@ export type Database = {
           impact?: string | null
           project_id: string
           remediation?: string | null
+          retest_date?: string | null
+          retest_notes?: string | null
+          retest_status?: string | null
+          retested_by?: string | null
           severity: string
           status?: string | null
           steps_to_reproduce?: string | null
@@ -95,6 +103,10 @@ export type Database = {
           impact?: string | null
           project_id?: string
           remediation?: string | null
+          retest_date?: string | null
+          retest_notes?: string | null
+          retest_status?: string | null
+          retested_by?: string | null
           severity?: string
           status?: string | null
           steps_to_reproduce?: string | null
