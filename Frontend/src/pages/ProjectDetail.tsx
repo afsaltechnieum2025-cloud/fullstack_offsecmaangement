@@ -882,7 +882,9 @@ export default function ProjectDetail() {
                 <p className="text-muted-foreground">{assignees.length} member{assignees.length !== 1 ? 's' : ''} assigned</p>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {assignees.map((member) => {
-                    const sn = String(member.username || '').replace(/<[^>]*>/g, '').trim() || 'Unknown';
+                    // Prefer allUsers lookup (populated from /api/users), fall back to assignment username
+                    const resolvedName = allUsers[String(member.user_id)] || member.username || '';
+                    const sn = String(resolvedName).replace(/<[^>]*>/g, '').trim() || 'Unknown';
                     return (
                       <Card key={member.id} glow>
                         <CardContent className="p-4">

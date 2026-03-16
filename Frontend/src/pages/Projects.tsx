@@ -21,6 +21,9 @@ import {
   Loader2,
   UserPlus,
   Trash2,
+  X,
+  Check,
+  UserMinus,
 } from 'lucide-react';
 import {
   Select,
@@ -71,6 +74,13 @@ type Profile = {
   username: string;
 };
 
+type Assignee = {
+  id: string;
+  user_id: string;
+  username: string;
+  assigned_at: string;
+};
+
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:5000/api';
@@ -95,11 +105,17 @@ export default function Projects() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
-  const [selectedTester, setSelectedTester] = useState<string>('');
   const [isAssigning, setIsAssigning] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Multi-select assign state
+  const [currentAssignees, setCurrentAssignees] = useState<Assignee[]>([]);
+  const [selectedTesters, setSelectedTesters] = useState<string[]>([]); // profile ids to add
+  const [loadingAssignees, setLoadingAssignees] = useState(false);
+  const [removingUserId, setRemovingUserId] = useState<string | null>(null);
+  const [userSearchQuery, setUserSearchQuery] = useState('');
 
   const [newProject, setNewProject] = useState({
     name: '',
@@ -116,22 +132,15 @@ export default function Projects() {
     fetchProfiles();
   }, [user]);
 
-  // ─── Fetch projects ── critical path, shows loader ────────────────────────
+  // ─── Fetch projects ───────────────────────────────────────────────────────
 
   const fetchProjects = async () => {
     if (!user) return;
     setIsLoading(true);
     try {
       const res = await fetch(`${API_BASE}/projects`, { headers: authHeaders() });
-
-      if (!res.ok) {
-        const errText = await res.text();
-        console.error('Projects API error:', res.status, errText);
-        throw new Error(`Projects API returned ${res.status}`);
-      }
-
-      const data: Project[] = await res.json();
-      setProjects(data);
+      if (!res.ok) throw new Error(`Projects API returned ${res.status}`);
+      setProjects(await res.json());
     } catch (error) {
       console.error('Error fetching projects:', error);
       toast.error('Failed to load projects');
@@ -140,31 +149,39 @@ export default function Projects() {
     }
   };
 
-  // ─── Fetch users for assign dropdown ── non-critical, silent on failure ───
+  // ─── Fetch users ──────────────────────────────────────────────────────────
 
   const fetchProfiles = async () => {
     if (!user) return;
     try {
-      // Points to your existing /api/users route
       const res = await fetch(`${API_BASE}/users`, { headers: authHeaders() });
-
-      if (!res.ok) {
-        console.warn('Users endpoint returned:', res.status);
-        return;
-      }
-
+      if (!res.ok) return;
       const data = await res.json();
-
-      // Normalise to Profile shape — adjust field names if your users table differs
       const normalised: Profile[] = data.map((u: any) => ({
         id:       u.id,
         user_id:  u.id,
         username: u.username ?? u.name ?? u.email ?? String(u.id),
       }));
-
       setProfiles(normalised);
     } catch (error) {
       console.warn('fetchProfiles failed (non-critical):', error);
+    }
+  };
+
+  // ─── Fetch current assignees for a project ────────────────────────────────
+
+  const fetchAssignees = async (projectId: string) => {
+    setLoadingAssignees(true);
+    try {
+      const res = await fetch(`${API_BASE}/projects/${projectId}/assignments`, { headers: authHeaders() });
+      if (!res.ok) throw new Error('Failed to fetch assignees');
+      const data: Assignee[] = await res.json();
+      setCurrentAssignees(data);
+    } catch {
+      toast.error('Failed to load current team members');
+      setCurrentAssignees([]);
+    } finally {
+      setLoadingAssignees(false);
     }
   };
 
@@ -182,10 +199,7 @@ export default function Projects() {
 
   const getStatusBadge = (status: string | null) => {
     const variants: Record<string, 'active' | 'completed' | 'pending' | 'overdue'> = {
-      active: 'active',
-      completed: 'completed',
-      pending: 'pending',
-      overdue: 'overdue',
+      active: 'active', completed: 'completed', pending: 'pending', overdue: 'overdue',
     };
     return (
       <Badge variant={variants[status || 'pending'] || 'secondary'}>
@@ -196,23 +210,27 @@ export default function Projects() {
 
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return 'Not set';
-    return new Date(dateStr).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    });
+    return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  // ─── Toggle tester selection ──────────────────────────────────────────────
+
+  const toggleTesterSelection = (profileId: string) => {
+    setSelectedTesters(prev =>
+      prev.includes(profileId)
+        ? prev.filter(id => id !== profileId)
+        : [...prev, profileId]
+    );
   };
 
   // ─── Create project ───────────────────────────────────────────────────────
 
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
-
     if (!newProject.name || !newProject.client || !newProject.targetDomain) {
       toast.error('Please fill in all required fields');
       return;
     }
-
     try {
       const res = await fetch(`${API_BASE}/projects`, {
         method: 'POST',
@@ -222,69 +240,87 @@ export default function Projects() {
           client:       newProject.client,
           description:  newProject.description || null,
           domain:       newProject.targetDomain,
-          ip_addresses: newProject.targetIPs
-            ? newProject.targetIPs.split(',').map((ip) => ip.trim())
-            : null,
-          start_date: newProject.startDate || null,
-          end_date:   newProject.endDate   || null,
-          created_by: user?.id,
-          status:     'active',
+          ip_addresses: newProject.targetIPs ? newProject.targetIPs.split(',').map((ip) => ip.trim()) : null,
+          start_date:   newProject.startDate || null,
+          end_date:     newProject.endDate   || null,
+          created_by:   user?.id,
+          status:       'active',
         }),
       });
-
-      if (!res.ok) {
-        const errText = await res.text();
-        console.error('Create project error:', res.status, errText);
-        throw new Error('Failed to create project');
-      }
-
+      if (!res.ok) throw new Error('Failed to create project');
       toast.success('Project created successfully!');
       setIsDialogOpen(false);
       setNewProject({ name: '', client: '', description: '', targetDomain: '', targetIPs: '', startDate: '', endDate: '' });
       fetchProjects();
     } catch (error) {
-      console.error('Error creating project:', error);
       toast.error('Failed to create project');
     }
   };
 
-  // ─── Assign tester ────────────────────────────────────────────────────────
+  // ─── Assign multiple testers ──────────────────────────────────────────────
 
-  const handleAssignTester = async () => {
-    if (!selectedProject || !selectedTester) {
-      toast.error('Please select a tester');
+  const handleAssignTesters = async () => {
+    if (!selectedProject || selectedTesters.length === 0) {
+      toast.error('Please select at least one tester');
       return;
     }
     setIsAssigning(true);
+    let successCount = 0;
+    let skipCount = 0;
     try {
-      const profile = profiles.find((p) => p.id === selectedTester);
-      if (!profile) { toast.error('Tester not found'); return; }
-
-      const res = await fetch(`${API_BASE}/projects/${selectedProject.id}/assignments`, {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ user_id: profile.user_id }),
-      });
-
-      if (res.status === 409) { toast.error('Tester is already assigned to this project'); return; }
-      if (!res.ok) throw new Error('Failed to assign tester');
-
-      toast.success('Tester assigned successfully!');
-      setIsAssignDialogOpen(false);
-      setSelectedTester('');
+      for (const profileId of selectedTesters) {
+        const profile = profiles.find(p => p.id === profileId);
+        if (!profile) continue;
+        const res = await fetch(`${API_BASE}/projects/${selectedProject.id}/assignments`, {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ user_id: profile.user_id }),
+        });
+        if (res.status === 409) { skipCount++; continue; }
+        if (res.ok) successCount++;
+      }
+      if (successCount > 0) toast.success(`${successCount} tester${successCount > 1 ? 's' : ''} assigned successfully!`);
+      if (skipCount > 0)    toast.info(`${skipCount} tester${skipCount > 1 ? 's were' : ' was'} already assigned`);
+      setSelectedTesters([]);
+      await fetchAssignees(selectedProject.id);
       fetchProjects();
-    } catch (error) {
-      console.error('Error assigning tester:', error);
-      toast.error('Failed to assign tester');
+    } catch {
+      toast.error('Failed to assign testers');
     } finally {
       setIsAssigning(false);
     }
   };
 
-  const openAssignDialog = (project: Project) => {
+  // ─── Remove assignee ──────────────────────────────────────────────────────
+
+  const handleRemoveAssignee = async (assignee: Assignee) => {
+    if (!selectedProject) return;
+    setRemovingUserId(assignee.user_id);
+    try {
+      // Try DELETE /projects/:id/assignments/:userId  (adjust if your route differs)
+      const res = await fetch(
+        `${API_BASE}/projects/${selectedProject.id}/assignments/${assignee.user_id}`,
+        { method: 'DELETE', headers: authHeaders() }
+      );
+      if (!res.ok) throw new Error('Failed to remove');
+      setCurrentAssignees(prev => prev.filter(a => a.user_id !== assignee.user_id));
+      toast.success(`${assignee.username} removed from project`);
+      fetchProjects();
+    } catch {
+      toast.error('Failed to remove team member');
+    } finally {
+      setRemovingUserId(null);
+    }
+  };
+
+  // ─── Open assign dialog ───────────────────────────────────────────────────
+
+  const openAssignDialog = async (project: Project) => {
     setSelectedProject(project);
-    setSelectedTester('');
+    setSelectedTesters([]);
+    setUserSearchQuery('');
     setIsAssignDialogOpen(true);
+    await fetchAssignees(project.id);
   };
 
   // ─── Delete project ───────────────────────────────────────────────────────
@@ -299,23 +335,27 @@ export default function Projects() {
     setIsDeleting(true);
     try {
       const res = await fetch(`${API_BASE}/projects/${projectToDelete.id}`, {
-        method: 'DELETE',
-        headers: authHeaders(),
+        method: 'DELETE', headers: authHeaders(),
       });
-
       if (!res.ok) throw new Error('Failed to delete project');
-
       toast.success('Project deleted successfully!');
       setIsDeleteDialogOpen(false);
       setProjectToDelete(null);
       fetchProjects();
-    } catch (error) {
-      console.error('Error deleting project:', error);
+    } catch {
       toast.error('Failed to delete project');
     } finally {
       setIsDeleting(false);
     }
   };
+
+  // ─── Derived: available users (not yet assigned) ──────────────────────────
+
+  const assignedUserIds = new Set(currentAssignees.map(a => String(a.user_id)));
+  const availableProfiles = profiles.filter(
+    p => !assignedUserIds.has(String(p.user_id)) &&
+    (userSearchQuery === '' || p.username.toLowerCase().includes(userSearchQuery.toLowerCase()))
+  );
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -330,22 +370,14 @@ export default function Projects() {
   }
 
   return (
-    <DashboardLayout
-      title="Projects"
-      description="Manage and track all penetration testing engagements"
-    >
+    <DashboardLayout title="Projects" description="Manage and track all penetration testing engagements">
       <div className="space-y-6">
 
         {/* Filters */}
         <div className="flex flex-col sm:flex-row gap-4">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search projects..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10 bg-secondary/50"
-            />
+            <Input placeholder="Search projects..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-10 bg-secondary/50" />
           </div>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="w-full sm:w-40 bg-secondary/50">
@@ -364,86 +396,47 @@ export default function Projects() {
           {(role === 'admin' || role === 'manager') && (
             <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
               <DialogTrigger asChild>
-                <Button variant="gradient">
-                  <Plus className="h-4 w-4 mr-2" />
-                  New Project
-                </Button>
+                <Button variant="gradient"><Plus className="h-4 w-4 mr-2" />New Project</Button>
               </DialogTrigger>
               <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                <DialogHeader>
-                  <DialogTitle>Create New Project</DialogTitle>
-                </DialogHeader>
+                <DialogHeader><DialogTitle>Create New Project</DialogTitle></DialogHeader>
                 <form onSubmit={handleCreateProject} className="space-y-4 mt-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Project Name *</Label>
-                      <Input
-                        placeholder="e.g., Security Assessment"
-                        value={newProject.name}
-                        onChange={(e) => setNewProject({ ...newProject, name: e.target.value })}
-                        required
-                      />
+                      <Input placeholder="e.g., Security Assessment" value={newProject.name} onChange={(e) => setNewProject({ ...newProject, name: e.target.value })} required />
                     </div>
                     <div className="space-y-2">
                       <Label>Client Name *</Label>
-                      <Input
-                        placeholder="e.g., Acme Corp"
-                        value={newProject.client}
-                        onChange={(e) => setNewProject({ ...newProject, client: e.target.value })}
-                        required
-                      />
+                      <Input placeholder="e.g., Acme Corp" value={newProject.client} onChange={(e) => setNewProject({ ...newProject, client: e.target.value })} required />
                     </div>
                   </div>
                   <div className="space-y-2">
                     <Label>Description</Label>
-                    <Textarea
-                      placeholder="Project description and scope"
-                      value={newProject.description}
-                      onChange={(e) => setNewProject({ ...newProject, description: e.target.value })}
-                      rows={3}
-                    />
+                    <Textarea placeholder="Project description and scope" value={newProject.description} onChange={(e) => setNewProject({ ...newProject, description: e.target.value })} rows={3} />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Target Domain *</Label>
-                      <Input
-                        placeholder="e.g., example.com"
-                        value={newProject.targetDomain}
-                        onChange={(e) => setNewProject({ ...newProject, targetDomain: e.target.value })}
-                        required
-                      />
+                      <Input placeholder="e.g., example.com" value={newProject.targetDomain} onChange={(e) => setNewProject({ ...newProject, targetDomain: e.target.value })} required />
                     </div>
                     <div className="space-y-2">
                       <Label>Target IPs (comma-separated)</Label>
-                      <Input
-                        placeholder="e.g., 192.168.1.1, 192.168.1.2"
-                        value={newProject.targetIPs}
-                        onChange={(e) => setNewProject({ ...newProject, targetIPs: e.target.value })}
-                      />
+                      <Input placeholder="e.g., 192.168.1.1, 192.168.1.2" value={newProject.targetIPs} onChange={(e) => setNewProject({ ...newProject, targetIPs: e.target.value })} />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Start Date</Label>
-                      <Input
-                        type="date"
-                        value={newProject.startDate}
-                        onChange={(e) => setNewProject({ ...newProject, startDate: e.target.value })}
-                      />
+                      <Input type="date" value={newProject.startDate} onChange={(e) => setNewProject({ ...newProject, startDate: e.target.value })} />
                     </div>
                     <div className="space-y-2">
                       <Label>End Date</Label>
-                      <Input
-                        type="date"
-                        value={newProject.endDate}
-                        onChange={(e) => setNewProject({ ...newProject, endDate: e.target.value })}
-                      />
+                      <Input type="date" value={newProject.endDate} onChange={(e) => setNewProject({ ...newProject, endDate: e.target.value })} />
                     </div>
                   </div>
                   <div className="flex justify-end gap-3 pt-4">
-                    <DialogClose asChild>
-                      <Button type="button" variant="outline">Cancel</Button>
-                    </DialogClose>
+                    <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
                     <Button type="submit" variant="gradient">Create Project</Button>
                   </div>
                 </form>
@@ -455,12 +448,7 @@ export default function Projects() {
         {/* Projects Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {filteredProjects.map((project, index) => (
-            <Card
-              key={project.id}
-              glow
-              className="animate-fade-in hover:border-primary/30 transition-all"
-              style={{ animationDelay: `${index * 50}ms` }}
-            >
+            <Card key={project.id} glow className="animate-fade-in hover:border-primary/30 transition-all" style={{ animationDelay: `${index * 50}ms` }}>
               <CardHeader className="pb-3">
                 <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
                   <div className="space-y-1 min-w-0">
@@ -482,48 +470,34 @@ export default function Projects() {
                   </div>
                   <div className="flex items-start gap-2 text-sm col-span-1">
                     <Calendar className="h-4 w-4 text-primary shrink-0 mt-0.5" />
-                    <span className="text-muted-foreground leading-snug">
-                      {formatDate(project.start_date)} – {formatDate(project.end_date)}
-                    </span>
+                    <span className="text-muted-foreground leading-snug">{formatDate(project.start_date)} – {formatDate(project.end_date)}</span>
                   </div>
                   <div className="flex items-center gap-2 text-sm">
                     <UsersIcon className="h-4 w-4 text-primary shrink-0" />
                     <span className="text-muted-foreground">{project.assignees_count ?? 0} Testers</span>
                   </div>
                 </div>
-
                 <div className="flex flex-wrap items-center justify-between gap-y-2 pt-2 border-t border-border/50">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium">{project.findings_count ?? 0}</span>
                     <span className="text-sm text-muted-foreground">Findings</span>
                     {(project.critical_count || 0) > 0 && (
-                      <Badge variant="critical" className="text-xs">
-                        {project.critical_count} Critical
-                      </Badge>
+                      <Badge variant="critical" className="text-xs">{project.critical_count} Critical</Badge>
                     )}
                   </div>
                   <div className="flex items-center gap-1">
                     {(role === 'admin' || role === 'manager') && (
                       <Button variant="ghost" size="sm" onClick={() => openAssignDialog(project)}>
-                        <UserPlus className="h-4 w-4 mr-1" />
-                        Assign
+                        <UserPlus className="h-4 w-4 mr-1" />Assign
                       </Button>
                     )}
                     {role === 'admin' && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => openDeleteDialog(project)}
-                        className="text-destructive hover:text-destructive"
-                      >
+                      <Button variant="ghost" size="sm" onClick={() => openDeleteDialog(project)} className="text-destructive hover:text-destructive">
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     )}
                     <Link to={`/projects/${project.id}`}>
-                      <Button variant="ghost" size="sm">
-                        View
-                        <ChevronRight className="h-4 w-4 ml-1" />
-                      </Button>
+                      <Button variant="ghost" size="sm">View<ChevronRight className="h-4 w-4 ml-1" /></Button>
                     </Link>
                   </div>
                 </div>
@@ -537,50 +511,152 @@ export default function Projects() {
             <div className="text-center text-muted-foreground">
               <p className="text-lg font-medium">No projects found</p>
               <p className="text-sm mt-1">
-                {projects.length === 0
-                  ? 'Create a new project to get started'
-                  : 'Try adjusting your search or filter criteria'}
+                {projects.length === 0 ? 'Create a new project to get started' : 'Try adjusting your search or filter criteria'}
               </p>
             </div>
           </Card>
         )}
 
-        {/* Assign Tester Dialog */}
-        <Dialog open={isAssignDialogOpen} onOpenChange={setIsAssignDialogOpen}>
-          <DialogContent>
+        {/* ── Assign Testers Dialog (multi-select + remove) ── */}
+        <Dialog open={isAssignDialogOpen} onOpenChange={(open) => {
+          setIsAssignDialogOpen(open);
+          if (!open) { setSelectedTesters([]); setUserSearchQuery(''); }
+        }}>
+          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Assign Tester to {selectedProject?.name}</DialogTitle>
+              <DialogTitle className="flex items-center gap-2">
+                <UserPlus className="h-5 w-5 text-primary" />
+                Manage Team — {selectedProject?.name}
+              </DialogTitle>
             </DialogHeader>
-            <div className="space-y-4 mt-4">
-              <div className="space-y-2">
-                <Label>Select Tester</Label>
-                <Select value={selectedTester} onValueChange={setSelectedTester}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a tester" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {profiles.length === 0 ? (
-                      <SelectItem value="__none__" disabled>No users available</SelectItem>
-                    ) : (
-                      profiles.map((profile) => (
-                        <SelectItem key={profile.id} value={profile.id}>
-                          {profile.username}
-                        </SelectItem>
-                      ))
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex justify-end gap-3">
-                <Button type="button" variant="outline" onClick={() => setIsAssignDialogOpen(false)}>
-                  Cancel
-                </Button>
-                <Button variant="gradient" onClick={handleAssignTester} disabled={isAssigning}>
-                  {isAssigning ? (
-                    <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Assigning...</>
+
+            <div className="space-y-5 mt-2">
+
+              {/* ── Current Assignees ── */}
+              <div>
+                <Label className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+                  Current Team ({currentAssignees.length})
+                </Label>
+                <div className="mt-2 space-y-1.5 min-h-[40px]">
+                  {loadingAssignees ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />Loading team members…
+                    </div>
+                  ) : currentAssignees.length === 0 ? (
+                    <p className="text-sm text-muted-foreground py-2 px-1">No members assigned yet.</p>
                   ) : (
-                    'Assign Tester'
+                    currentAssignees.map((assignee) => {
+                      const name = assignee.username || String(assignee.user_id);
+                      const isRemoving = removingUserId === assignee.user_id;
+                      return (
+                        <div key={assignee.user_id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-secondary/40 border border-border/40 group">
+                          <div className="flex items-center gap-2.5">
+                            <div className="h-7 w-7 rounded-full gradient-technieum flex items-center justify-center text-primary-foreground text-xs font-semibold shrink-0">
+                              {name.charAt(0).toUpperCase()}
+                            </div>
+                            <span className="text-sm font-medium">{name}</span>
+                            <Badge variant="secondary" className="text-xs">Tester</Badge>
+                          </div>
+                          <button
+                            onClick={() => handleRemoveAssignee(assignee)}
+                            disabled={isRemoving}
+                            title="Remove from project"
+                            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50 opacity-0 group-hover:opacity-100"
+                          >
+                            {isRemoving
+                              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              : <><UserMinus className="h-3.5 w-3.5" />Remove</>
+                            }
+                          </button>
+                        </div>
+                      );
+                    })
                   )}
+                </div>
+              </div>
+
+              <div className="border-t border-border/50" />
+
+              {/* ── Add New Members ── */}
+              <div>
+                <Label className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+                  Add Members
+                </Label>
+
+                {/* Search filter */}
+                <div className="relative mt-2 mb-2">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                  <Input
+                    placeholder="Search users…"
+                    value={userSearchQuery}
+                    onChange={(e) => setUserSearchQuery(e.target.value)}
+                    className="pl-8 h-8 text-sm bg-secondary/50"
+                  />
+                </div>
+
+                {/* Selected pills */}
+                {selectedTesters.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {selectedTesters.map(id => {
+                      const p = profiles.find(pr => pr.id === id);
+                      if (!p) return null;
+                      return (
+                        <span key={id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 text-xs font-medium">
+                          {p.username}
+                          <button onClick={() => toggleTesterSelection(id)} className="hover:text-destructive transition-colors ml-0.5">
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* User list */}
+                <div className="border border-border/50 rounded-lg overflow-hidden max-h-48 overflow-y-auto">
+                  {availableProfiles.length === 0 ? (
+                    <div className="px-3 py-4 text-sm text-muted-foreground text-center">
+                      {userSearchQuery ? 'No users match your search' : 'All users are already assigned'}
+                    </div>
+                  ) : (
+                    availableProfiles.map((profile) => {
+                      const isSelected = selectedTesters.includes(profile.id);
+                      return (
+                        <button
+                          key={profile.id}
+                          onClick={() => toggleTesterSelection(profile.id)}
+                          className={`w-full flex items-center justify-between px-3 py-2.5 text-sm transition-colors hover:bg-secondary/60 border-b border-border/30 last:border-0 ${isSelected ? 'bg-primary/5' : ''}`}
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <div className={`h-7 w-7 rounded-full flex items-center justify-center text-xs font-semibold shrink-0 transition-all ${isSelected ? 'gradient-technieum text-primary-foreground' : 'bg-secondary text-muted-foreground'}`}>
+                              {profile.username.charAt(0).toUpperCase()}
+                            </div>
+                            <span className={isSelected ? 'font-medium' : ''}>{profile.username}</span>
+                          </div>
+                          <div className={`h-4 w-4 rounded border flex items-center justify-center transition-all ${isSelected ? 'bg-primary border-primary' : 'border-border'}`}>
+                            {isSelected && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
+                          </div>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex justify-end gap-3 pt-1">
+                <Button type="button" variant="outline" onClick={() => setIsAssignDialogOpen(false)}>
+                  Close
+                </Button>
+                <Button
+                  variant="gradient"
+                  onClick={handleAssignTesters}
+                  disabled={isAssigning || selectedTesters.length === 0}
+                >
+                  {isAssigning
+                    ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Assigning…</>
+                    : <><UserPlus className="h-4 w-4 mr-2" />Add {selectedTesters.length > 0 ? `(${selectedTesters.length})` : ''}</>
+                  }
                 </Button>
               </div>
             </div>
@@ -600,11 +676,10 @@ export default function Projects() {
             <AlertDialogFooter>
               <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
               <Button variant="destructive" onClick={handleDeleteProject} disabled={isDeleting}>
-                {isDeleting ? (
-                  <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Deleting...</>
-                ) : (
-                  <><Trash2 className="h-4 w-4 mr-2" />Delete Project</>
-                )}
+                {isDeleting
+                  ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Deleting…</>
+                  : <><Trash2 className="h-4 w-4 mr-2" />Delete Project</>
+                }
               </Button>
             </AlertDialogFooter>
           </AlertDialogContent>
