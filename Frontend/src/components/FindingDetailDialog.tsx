@@ -11,7 +11,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
-import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   AlertTriangle,
@@ -20,11 +19,12 @@ import {
   Wrench,
   Target,
   Upload,
-  X,
   Image as ImageIcon,
   Loader2,
   Trash2,
 } from 'lucide-react';
+
+const API_BASE = 'http://localhost:8080/api';
 
 type Finding = {
   id: string;
@@ -78,13 +78,9 @@ export default function FindingDetailDialog({
     if (!finding) return;
     setIsLoadingPocs(true);
     try {
-      const { data, error } = await supabase
-        .from('finding_pocs')
-        .select('*')
-        .eq('finding_id', finding.id)
-        .order('uploaded_at', { ascending: false });
-
-      if (error) throw error;
+      const res = await fetch(`${API_BASE}/findings/${finding.id}/pocs`);
+      if (!res.ok) throw new Error('Failed to fetch POCs');
+      const data = await res.json();
       setPocs(data || []);
     } catch (error) {
       console.error('Error fetching POCs:', error);
@@ -111,27 +107,19 @@ export default function FindingDetailDialog({
 
     setIsUploading(true);
     try {
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${finding.id}/${Date.now()}.${fileExt}`;
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('uploaded_by', String(user.id));
 
-      const { error: uploadError } = await supabase.storage
-        .from('poc-images')
-        .upload(fileName, file);
-
-      if (uploadError) throw uploadError;
-
-      const { data: publicUrlData } = supabase.storage
-        .from('poc-images')
-        .getPublicUrl(fileName);
-
-      const { error: insertError } = await supabase.from('finding_pocs').insert({
-        finding_id: finding.id,
-        file_name: file.name,
-        file_path: publicUrlData.publicUrl,
-        uploaded_by: user.id,
+      const res = await fetch(`${API_BASE}/findings/${finding.id}/pocs`, {
+        method: 'POST',
+        body: formData,
       });
 
-      if (insertError) throw insertError;
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || 'Upload failed');
+      }
 
       toast.success('POC image uploaded successfully');
       fetchPocs();
@@ -145,24 +133,20 @@ export default function FindingDetailDialog({
   };
 
   const handleDeletePoc = async (poc: POC) => {
-    if (!user || poc.uploaded_by !== user.id) {
+    if (!user || poc.uploaded_by !== String(user.id)) {
       toast.error('You can only delete POCs you uploaded');
       return;
     }
 
     try {
-      // Extract file path from URL for storage deletion
-      const urlParts = poc.file_path.split('/poc-images/');
-      if (urlParts.length > 1) {
-        await supabase.storage.from('poc-images').remove([urlParts[1]]);
+      const res = await fetch(`${API_BASE}/findings/${finding!.id}/pocs/${poc.id}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || 'Delete failed');
       }
-
-      const { error } = await supabase
-        .from('finding_pocs')
-        .delete()
-        .eq('id', poc.id);
-
-      if (error) throw error;
 
       toast.success('POC image deleted');
       fetchPocs();
@@ -170,6 +154,11 @@ export default function FindingDetailDialog({
       console.error('Delete error:', error);
       toast.error('Failed to delete POC image');
     }
+  };
+
+  const getPocImageUrl = (filePath: string) => {
+    // filePath is stored as /uploads/pocs/filename.png
+    return `http://localhost:8080${filePath}`;
   };
 
   const getSeverityBadge = (severity: string) => {
@@ -206,7 +195,6 @@ export default function FindingDetailDialog({
 
         <ScrollArea className="max-h-[calc(90vh-120px)]">
           <div className="p-6 pt-4 space-y-6">
-            {/* Description */}
             {finding.description && (
               <Card>
                 <CardHeader className="pb-3">
@@ -223,7 +211,6 @@ export default function FindingDetailDialog({
               </Card>
             )}
 
-            {/* Affected Component & CWE */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {finding.affected_component && (
                 <Card>
@@ -257,7 +244,6 @@ export default function FindingDetailDialog({
               )}
             </div>
 
-            {/* Steps to Reproduce */}
             {finding.steps_to_reproduce && (
               <Card>
                 <CardHeader className="pb-3">
@@ -274,7 +260,6 @@ export default function FindingDetailDialog({
               </Card>
             )}
 
-            {/* Impact */}
             {finding.impact && (
               <Card className="border-destructive/20">
                 <CardHeader className="pb-3">
@@ -291,7 +276,6 @@ export default function FindingDetailDialog({
               </Card>
             )}
 
-            {/* Remediation */}
             {finding.remediation && (
               <Card className="border-green-500/20">
                 <CardHeader className="pb-3">
@@ -367,10 +351,10 @@ export default function FindingDetailDialog({
                         className="relative group rounded-lg overflow-hidden border"
                       >
                         <img
-                          src={poc.file_path}
+                          src={getPocImageUrl(poc.file_path)}
                           alt={poc.file_name}
                           className="w-full h-48 object-cover cursor-pointer hover:opacity-90 transition-opacity"
-                          onClick={() => window.open(poc.file_path, '_blank')}
+                          onClick={() => window.open(getPocImageUrl(poc.file_path), '_blank')}
                         />
                         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3">
                           <p className="text-white text-xs truncate">{poc.file_name}</p>
@@ -378,7 +362,7 @@ export default function FindingDetailDialog({
                             {new Date(poc.uploaded_at).toLocaleDateString()}
                           </p>
                         </div>
-                        {user?.id === poc.uploaded_by && (
+                        {String(user?.id) === poc.uploaded_by && (
                           <Button
                             variant="destructive"
                             size="icon"
