@@ -7,14 +7,20 @@ const app = express();
 app.use(cors({ origin: ['http://localhost:5173', 'http://localhost:8080'] }));
 app.use(express.json());
 
-// Routes — ALL must be before app.listen
-const authRoutes = require('./routes/auth');
+// ── Routes ────────────────────────────────────────────────────
+const authRoutes     = require('./routes/auth');
 const trendingRoutes = require('./routes/trending');
-const usersRoutes = require('./routes/user');  // ← 'users' not 'user'
+const usersRoutes    = require('./routes/user');
+const projectsRoutes = require('./routes/projects');   // ← NEW
+const findingsRoutes = require('./routes/findings');
 
-app.use('/api/auth', authRoutes);
+const path = require('path');
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/api/findings', findingsRoutes);
+app.use('/api/auth',     authRoutes);
 app.use('/api/trending', trendingRoutes);
-app.use('/api/users', usersRoutes);  // ← '/api/users' not '/api/user'
+app.use('/api/users',    usersRoutes);
+app.use('/api/projects', projectsRoutes);              // ← NEW
 
 app.get('/', (req, res) => {
   res.json({ message: 'Backend is running!' });

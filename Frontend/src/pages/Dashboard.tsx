@@ -3,7 +3,6 @@ import DashboardLayout from '@/components/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import {
   FolderKanban,
@@ -32,6 +31,8 @@ import {
   AreaChart,
 } from 'recharts';
 
+// ─── Colors ───────────────────────────────────────────────────────────────────
+
 const severityColors = {
   critical: '#ef4444',
   high: '#f97316',
@@ -47,18 +48,22 @@ const statusColors = {
   overdue: '#ef4444',
 };
 
-interface SupabaseProject {
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface Project {
   id: string;
   name: string;
   client: string;
   status: string;
   findings_count: number;
   critical_count: number;
+  high_count?: number;
+  medium_count?: number;
+  low_count?: number;
+  info_count?: number;
   assignees_count: number;
-  [key: string]: any;
+  assignedTesters?: string[];
 }
-
-const USERS_API = 'http://localhost:5000/api/users';
 
 interface TeamMember {
   id: number;
@@ -67,21 +72,58 @@ interface TeamMember {
   full_name: string | null;
 }
 
+// ─── Config ───────────────────────────────────────────────────────────────────
+
+const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:5000/api';
+
+const authHeaders = (): HeadersInit => {
+  const token = localStorage.getItem('token') ?? '';
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+};
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
 export default function Dashboard() {
   const { user, role, username } = useAuth();
 
-  // ── Team Members state ───────────────────────────────────────────────────
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
 
   useEffect(() => {
+    fetchProjects();
     fetchTeamMembers();
-  }, []);
+  }, [user]);
+
+  // ─── Fetch projects from MySQL via Express ──────────────────────────────────
+
+  const fetchProjects = async () => {
+    if (!user) return;
+    try {
+      const res = await fetch(`${API_BASE}/projects`, { headers: authHeaders() });
+
+      if (!res.ok) {
+        console.error('Projects API error:', res.status);
+        throw new Error('Failed to fetch projects');
+      }
+
+      const data: Project[] = await res.json();
+      setProjects(data);
+    } catch (error) {
+      console.error('Error fetching projects:', error);
+      toast.error('Failed to load projects');
+    }
+  };
+
+  // ─── Fetch team members ─────────────────────────────────────────────────────
 
   const fetchTeamMembers = async () => {
     try {
-      const response = await fetch(USERS_API);
-      if (!response.ok) throw new Error('Failed to fetch users');
-      const data = await response.json();
+      const res = await fetch(`${API_BASE}/users`, { headers: authHeaders() });
+      if (!res.ok) throw new Error('Failed to fetch users');
+      const data: TeamMember[] = await res.json();
       setTeamMembers(data);
     } catch (error) {
       console.error('Error fetching team members:', error);
@@ -89,87 +131,42 @@ export default function Dashboard() {
     }
   };
 
-  // ── Projects state ───────────────────────────────────────────────────────
-  const [projects, setProjects] = useState<SupabaseProject[]>([]);
-
-  useEffect(() => {
-    fetchProjects();
-  }, [user]);
-
-  const fetchProjects = async () => {
-    if (!user) return;
-    try {
-      const { data: projectsData, error: projectsError } = await supabase
-        .from('projects')
-        .select('*');
-
-      if (projectsError) throw projectsError;
-
-      const { data: findingsData } = await supabase
-        .from('findings')
-        .select('project_id, severity');
-
-      const { data: assignmentsData } = await supabase
-        .from('project_assignments')
-        .select('project_id, user_id');
-
-      const projectsWithCounts = (projectsData || []).map(project => {
-        const projectFindings = findingsData?.filter(f => f.project_id === project.id) || [];
-        const criticalFindings = projectFindings.filter(f => f.severity === 'critical');
-        const assignees = assignmentsData?.filter(a => a.project_id === project.id) || [];
-
-        return {
-          ...project,
-          findings_count: projectFindings.length,
-          critical_count: criticalFindings.length,
-          assignees_count: assignees.length,
-          assignedTesters: assignees.map((a: any) => a.user_id),
-          findings: projectFindings,
-        };
-      });
-
-      setProjects(projectsWithCounts);
-    } catch (error) {
-      console.error('Error fetching projects:', error);
-      toast.error('Failed to load projects');
-    }
-  };
-  // ────────────────────────────────────────────────────────────────────────
+  // ─── Derived stats ──────────────────────────────────────────────────────────
 
   const stats = useMemo(() => {
+    // Testers only see their assigned projects
     const userProjects = role === 'tester'
-      ? projects.filter(p => user && p.assignedTesters?.includes(user.id))
+      ? projects.filter(p => user && p.assignedTesters?.includes(String(user.id)))
       : projects;
 
-    const allFindings = userProjects.flatMap(p => p.findings ?? []);
-
     return {
-      totalProjects: userProjects.length,
-      activeProjects: userProjects.filter(p => p.status === 'active').length,
+      totalProjects:     userProjects.length,
+      activeProjects:    userProjects.filter(p => p.status === 'active').length,
       completedProjects: userProjects.filter(p => p.status === 'completed').length,
-      overdueProjects: userProjects.filter(p => p.status === 'overdue').length,
-      totalFindings: allFindings.length,
-      criticalFindings: allFindings.filter((f: any) => f.severity === 'Critical').length,
-      highFindings: allFindings.filter((f: any) => f.severity === 'High').length,
-      mediumFindings: allFindings.filter((f: any) => f.severity === 'Medium').length,
-      lowFindings: allFindings.filter((f: any) => f.severity === 'Low').length,
-      infoFindings: allFindings.filter((f: any) => f.severity === 'Informational').length,
+      overdueProjects:   userProjects.filter(p => p.status === 'overdue').length,
+      // findings_count / critical_count come pre-computed from the API (JOIN in SQL)
+      totalFindings:    userProjects.reduce((sum, p) => sum + (p.findings_count ?? 0), 0),
+      criticalFindings: userProjects.reduce((sum, p) => sum + (p.critical_count ?? 0), 0),
+      highFindings:     userProjects.reduce((sum, p) => sum + (p.high_count ?? 0), 0),
+      mediumFindings:   userProjects.reduce((sum, p) => sum + (p.medium_count ?? 0), 0),
+      lowFindings:      userProjects.reduce((sum, p) => sum + (p.low_count ?? 0), 0),
+      infoFindings:     userProjects.reduce((sum, p) => sum + (p.info_count ?? 0), 0),
     };
   }, [user, role, projects]);
 
   const severityData = [
     { name: 'Critical', value: stats.criticalFindings, color: severityColors.critical },
-    { name: 'High', value: stats.highFindings, color: severityColors.high },
-    { name: 'Medium', value: stats.mediumFindings, color: severityColors.medium },
-    { name: 'Low', value: stats.lowFindings, color: severityColors.low },
-    { name: 'Info', value: stats.infoFindings, color: severityColors.info },
+    { name: 'High',     value: stats.highFindings,     color: severityColors.high },
+    { name: 'Medium',   value: stats.mediumFindings,   color: severityColors.medium },
+    { name: 'Low',      value: stats.lowFindings,      color: severityColors.low },
+    { name: 'Info',     value: stats.infoFindings,     color: severityColors.info },
   ];
 
   const projectStatusData = [
-    { name: 'Active', value: stats.activeProjects, color: statusColors.active },
-    { name: 'Completed', value: stats.completedProjects, color: statusColors.completed },
-    { name: 'Pending', value: projects.filter(p => p.status === 'pending').length, color: statusColors.pending },
-    { name: 'Overdue', value: stats.overdueProjects, color: statusColors.overdue },
+    { name: 'Active',    value: stats.activeProjects,                                        color: statusColors.active },
+    { name: 'Completed', value: stats.completedProjects,                                     color: statusColors.completed },
+    { name: 'Pending',   value: projects.filter(p => p.status === 'pending').length,         color: statusColors.pending },
+    { name: 'Overdue',   value: stats.overdueProjects,                                       color: statusColors.overdue },
   ];
 
   const monthlyData = [
@@ -178,17 +175,17 @@ export default function Dashboard() {
     { month: 'Sep', findings: 24, projects: 4 },
     { month: 'Oct', findings: 35, projects: 4 },
     { month: 'Nov', findings: 28, projects: 3 },
-    { month: 'Dec', findings: 7, projects: 2 },
+    { month: 'Dec', findings: 7,  projects: 2 },
   ];
 
   const recentProjects = useMemo(() => {
-    if (role === 'admin') {
-      return projects.slice(0, 4);
-    }
+    if (role === 'admin') return projects.slice(0, 4);
     return projects
-      .filter(p => user && p.assignedTesters?.includes(user.id))
+      .filter(p => user && p.assignedTesters?.includes(String(user.id)))
       .slice(0, 4);
   }, [user, role, projects]);
+
+  // ─── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <DashboardLayout
@@ -196,6 +193,7 @@ export default function Dashboard() {
       description="Here's an overview of your pentest operations"
     >
       <div className="space-y-6">
+
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <Card glow className="animate-fade-in" style={{ animationDelay: '0ms' }}>
@@ -272,6 +270,7 @@ export default function Dashboard() {
 
         {/* Charts Row */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
           {/* Findings by Severity */}
           <Card className="animate-fade-in" style={{ animationDelay: '200ms' }}>
             <CardHeader>
@@ -307,10 +306,7 @@ export default function Dashboard() {
               <div className="flex flex-wrap gap-3 justify-center mt-4">
                 {severityData.map((item) => (
                   <div key={item.name} className="flex items-center gap-2">
-                    <div
-                      className="h-3 w-3 rounded-full"
-                      style={{ backgroundColor: item.color }}
-                    />
+                    <div className="h-3 w-3 rounded-full" style={{ backgroundColor: item.color }} />
                     <span className="text-xs text-muted-foreground">
                       {item.name} ({item.value})
                     </span>
@@ -331,7 +327,7 @@ export default function Dashboard() {
                   <AreaChart data={monthlyData}>
                     <defs>
                       <linearGradient id="colorFindings" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#f97316" stopOpacity={0.3} />
+                        <stop offset="5%"  stopColor="#f97316" stopOpacity={0.3} />
                         <stop offset="95%" stopColor="#f97316" stopOpacity={0} />
                       </linearGradient>
                     </defs>
@@ -361,6 +357,7 @@ export default function Dashboard() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
           {/* Recent Projects */}
           <Card className="animate-fade-in" style={{ animationDelay: '300ms' }}>
             <CardHeader>
@@ -448,6 +445,7 @@ export default function Dashboard() {
             </Card>
           )}
         </div>
+
       </div>
     </DashboardLayout>
   );

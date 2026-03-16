@@ -4,6 +4,8 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { useAuth } from '@/contexts/AuthContext';
+import { toast } from 'sonner';
 import {
   Search,
   Plus,
@@ -16,6 +18,7 @@ import {
   Image as ImageIcon,
   X,
   RefreshCw,
+  Loader2,
 } from 'lucide-react';
 import {
   Select,
@@ -34,6 +37,8 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 type Severity = 'Critical' | 'High' | 'Medium' | 'Low' | 'Informational';
 type RetestStatus = 'Open' | 'Fixed' | 'Not Fixed';
@@ -75,29 +80,44 @@ interface Project {
   client: string;
 }
 
-interface Profile {
+interface Assignee {
+  id: string;
   user_id: string;
   username: string;
 }
 
+// ─── API base URL ─────────────────────────────────────────────────────────────
+const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:5000/api';
+// Strip /api suffix to get the server root for static file serving
+const STATIC_BASE = API_BASE.replace(/\/api$/, '');
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
 export default function Findings() {
-  // Remove useAuth / Supabase user; use a dummy user id for local demo
-  const user = { id: 'demo-user' };
-  const role: 'user' | 'manager' | 'admin' = 'admin';
+  const { user, role } = useAuth();
+  const userId = (user?.id ?? '') as string; // always a string — empty string when not logged in
 
   const [searchQuery, setSearchQuery] = useState('');
   const [severityFilter, setSeverityFilter] = useState<string>('all');
   const [projectFilter, setProjectFilter] = useState<string>('all');
   const [expandedFinding, setExpandedFinding] = useState<string | null>(null);
+
   const [findings, setFindings] = useState<Finding[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [profiles, setProfiles] = useState<Profile[]>([]);
+  // Map: project_id → assignees (for username lookup)
+  const [assigneeMap, setAssigneeMap] = useState<Record<string, Assignee[]>>({});
   const [pocs, setPocs] = useState<Record<string, FindingPoc[]>>({});
+
   const [dialogOpen, setDialogOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [deletingFindingId, setDeletingFindingId] = useState<string | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadingFindingId, setUploadingFindingId] = useState<string | null>(null);
+
+  // POC files staged in the Add Finding form before submit
+  const formPocInputRef = useRef<HTMLInputElement>(null);
+  const [pendingPocs, setPendingPocs] = useState<{ file: File; preview: string }[]>([]);
 
   const [formData, setFormData] = useState({
     projectId: '',
@@ -112,86 +132,110 @@ export default function Findings() {
     cweId: '',
   });
 
-  // Fake initial data instead of Supabase fetch
-  useEffect(() => {
-    setIsLoading(true);
+  // ─── Auth header ─────────────────────────────────────────────────────────────
 
-    const demoProjects: Project[] = [
-      { id: 'p1', name: 'Demo Project 1', client: 'Client A' },
-      { id: 'p2', name: 'Demo Project 2', client: 'Client B' },
-    ];
-
-    const demoProfiles: Profile[] = [
-      { user_id: 'demo-user', username: 'demo_user' },
-      { user_id: 'other-user', username: 'other_user' },
-    ];
-
-    const now = new Date().toISOString();
-    const demoFindings: Finding[] = [
-      {
-        id: 'f1',
-        project_id: 'p1',
-        title: 'Reflected XSS in search',
-        severity: 'High',
-        description: 'User input is reflected without proper encoding.',
-        impact: 'Attacker can execute JavaScript in victim browser.',
-        remediation: 'Apply proper output encoding and input validation.',
-        steps_to_reproduce: '1. Go to /search\n2. Inject <script>alert(1)</script>.',
-        affected_component: '/search',
-        cvss_score: 8.2,
-        cwe_id: 'CWE-79',
-        status: 'Open',
-        created_by: 'demo-user',
-        created_at: now,
-        updated_at: now,
-        retest_status: null,
-        retest_date: null,
-        retest_notes: null,
-        retested_by: null,
-      },
-    ];
-
-    const demoPocs: Record<string, FindingPoc[]> = {
-      f1: [],
+  const authHeaders = (): HeadersInit => {
+    const token = localStorage.getItem('token');
+    return {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };
+  };
 
-    setProjects(demoProjects);
-    setProfiles(demoProfiles);
-    setFindings(demoFindings);
-    setPocs(demoPocs);
-    setIsLoading(false);
+  const authHeadersNoContent = (): HeadersInit => {
+    const token = localStorage.getItem('token');
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
+
+  // ─── Data Fetching ────────────────────────────────────────────────────────────
+
+  const fetchData = async () => {
+    setIsLoading(true);
+    try {
+      // 1. Fetch all projects
+      const projectsRes = await fetch(`${API_BASE}/projects`, {
+        headers: authHeaders(),
+      });
+      const projectsData: Project[] = projectsRes.ok ? await projectsRes.json() : [];
+      setProjects(projectsData);
+
+      // 2. Fetch all findings (backend should support no project_id filter for admin/manager)
+      //    If your backend requires project_id, fetch per project in parallel.
+      let allFindings: Finding[] = [];
+
+      if (projectsData.length > 0) {
+        const findingFetches = projectsData.map(p =>
+          fetch(`${API_BASE}/findings?project_id=${p.id}`, { headers: authHeaders() })
+            .then(r => r.ok ? r.json() : [])
+        );
+        const results = await Promise.all(findingFetches);
+        allFindings = results.flat();
+      }
+
+      // Sort by severity weight
+      const severityOrder: Record<string, number> = {
+        critical: 0, high: 1, medium: 2, low: 3, informational: 4,
+      };
+      allFindings.sort(
+        (a, b) =>
+          (severityOrder[a.severity.toLowerCase()] ?? 5) -
+          (severityOrder[b.severity.toLowerCase()] ?? 5)
+      );
+      setFindings(allFindings);
+
+      // 3. Fetch assignees for each project (for username lookup)
+      if (projectsData.length > 0) {
+        const assigneeFetches = projectsData.map(p =>
+          fetch(`${API_BASE}/projects/${p.id}/assignments`, { headers: authHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then((rows: Assignee[]) => ({ projectId: p.id, rows }))
+        );
+        const assigneeResults = await Promise.all(assigneeFetches);
+        const map: Record<string, Assignee[]> = {};
+        assigneeResults.forEach(({ projectId, rows }) => {
+          map[projectId] = rows;
+        });
+        setAssigneeMap(map);
+      }
+
+      // 4. Fetch POCs for each finding
+      if (allFindings.length > 0) {
+        const pocFetches = allFindings.map(f =>
+          fetch(`${API_BASE}/findings/${f.id}/pocs`, { headers: authHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then((rows: FindingPoc[]) => ({ findingId: f.id, rows }))
+        );
+        const pocResults = await Promise.all(pocFetches);
+        const pocMap: Record<string, FindingPoc[]> = {};
+        pocResults.forEach(({ findingId, rows }) => {
+          pocMap[findingId] = rows;
+        });
+        setPocs(pocMap);
+      }
+    } catch (error) {
+      console.error('Error fetching findings data:', error);
+      toast.error('Failed to load findings');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
   }, []);
 
-  const filteredFindings = findings.filter((finding) => {
-    const matchesSearch =
-      finding.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (finding.description?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false);
-    const matchesSeverity = severityFilter === 'all' || finding.severity === severityFilter;
-    const matchesProject = projectFilter === 'all' || finding.project_id === projectFilter;
-    return matchesSearch && matchesSeverity && matchesProject;
-  });
+  // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-  const getSeverityBadge = (severity: Severity) => {
-    const variants: Record<Severity, 'destructive' | 'secondary' | 'outline'> = {
-      Critical: 'destructive',
-      High: 'destructive',
-      Medium: 'secondary',
-      Low: 'outline',
-      Informational: 'outline',
-    };
-    return <Badge variant={variants[severity]}>{severity}</Badge>;
+  const getUsername = (uid: string) => {
+    for (const assignees of Object.values(assigneeMap)) {
+      const match = assignees.find(a => a.user_id === uid);
+      if (match) return match.username;
+    }
+    return uid; // fallback to raw ID
   };
 
-  const getSeverityIcon = (severity: Severity) => {
-    const colors: Record<Severity, string> = {
-      Critical: 'text-red-500',
-      High: 'text-orange-500',
-      Medium: 'text-yellow-500',
-      Low: 'text-green-500',
-      Informational: 'text-blue-500',
-    };
-    return <AlertTriangle className={`h-5 w-5 ${colors[severity]}`} />;
-  };
+  const getProjectName = (projectId: string) =>
+    projects.find(p => p.id === projectId)?.name ?? 'Unknown Project';
 
   const resetForm = () => {
     setFormData({
@@ -206,136 +250,44 @@ export default function Findings() {
       cvssScore: '',
       cweId: '',
     });
+    // Revoke preview URLs to free memory
+    pendingPocs.forEach(p => URL.revokeObjectURL(p.preview));
+    setPendingPocs([]);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!formData.projectId || !formData.severity || !formData.title || !formData.description) {
-      // Replace toast with simple alert or custom UI
-      alert('Please fill in all required fields');
-      return;
-    }
-
-    const now = new Date().toISOString();
-
-    const newFinding: Finding = {
-      id: `local-${Date.now()}`,
-      project_id: formData.projectId,
-      title: formData.title,
-      description: formData.description,
-      severity: formData.severity as Severity,
-      steps_to_reproduce: formData.stepsToReproduce || null,
-      impact: formData.impact || null,
-      remediation: formData.remediation || null,
-      affected_component: formData.affectedComponent || null,
-      cvss_score: formData.cvssScore ? parseFloat(formData.cvssScore) : null,
-      cwe_id: formData.cweId || null,
-      created_by: user.id,
-      created_at: now,
-      updated_at: now,
-      status: 'Open',
-      retest_status: null,
-      retest_date: null,
-      retest_notes: null,
-      retested_by: null,
+  const normalizeSeverity = (s: string): Severity => {
+    const map: Record<string, Severity> = {
+      critical: 'Critical',
+      high: 'High',
+      medium: 'Medium',
+      low: 'Low',
+      informational: 'Informational',
+      info: 'Informational', // DB alias
     };
-
-    setFindings((prev) => [newFinding, ...prev]);
-    alert('Finding added successfully!');
-    resetForm();
-    setDialogOpen(false);
+    return map[s.toLowerCase()] ?? 'Informational';
   };
 
-  const handleDelete = (findingId: string) => {
-    const finding = findings.find((f) => f.id === findingId);
-    if (!finding || finding.created_by !== user?.id) {
-      alert('You can only delete your own findings');
-      return;
-    }
-    setDeletingFindingId(findingId);
+  const SEVERITY_STYLES: Record<Severity, { bg: string; text: string; border: string }> = {
+    Critical:      { bg: 'bg-red-500/10',    text: 'text-red-500',    border: 'border-red-500/30'    },
+    High:          { bg: 'bg-orange-500/10', text: 'text-orange-500', border: 'border-orange-500/30' },
+    Medium:        { bg: 'bg-yellow-500/10', text: 'text-yellow-500', border: 'border-yellow-500/30' },
+    Low:           { bg: 'bg-green-500/10',  text: 'text-green-500',  border: 'border-green-500/30'  },
+    Informational: { bg: 'bg-blue-500/10',   text: 'text-blue-500',   border: 'border-blue-500/30'   },
   };
 
-  const confirmDelete = () => {
-    if (!deletingFindingId) return;
-    setFindings((prev) => prev.filter((f) => f.id !== deletingFindingId));
-    alert('Finding deleted');
-    setDeletingFindingId(null);
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, findingId: string) => {
-    const files = e.target.files;
-    if (!files || files.length === 0 || !user) return;
-
-    const file = files[0];
-    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png'];
-
-    if (!allowedTypes.includes(file.type)) {
-      alert('Only JPEG, JPG, and PNG files are allowed');
-      return;
-    }
-
-    // In a non-Supabase setup we cannot actually upload.
-    // We will just create a local object URL so the UI still works.
-    const objectUrl = URL.createObjectURL(file);
-
-    const newPoc: FindingPoc = {
-      id: `poc-${Date.now()}`,
-      finding_id: findingId,
-      file_path: objectUrl,
-      file_name: file.name,
-      uploaded_by: user.id,
-      uploaded_at: new Date().toISOString(),
-    };
-
-    setPocs((prev) => ({
-      ...prev,
-      [findingId]: [...(prev[findingId] || []), newPoc],
-    }));
-
-    alert('POC added locally (not uploaded to server)');
-
-    if (fileInputRef.current) fileInputRef.current.value = '';
-    setUploadingFindingId(null);
-  };
-
-  const handleDeletePoc = (poc: FindingPoc) => {
-    if (poc.uploaded_by !== user?.id) {
-      alert('You can only delete your own POCs');
-      return;
-    }
-
-    setPocs((prev) => ({
-      ...prev,
-      [poc.finding_id]: prev[poc.finding_id]?.filter((p) => p.id !== poc.id) || [],
-    }));
-
-    alert('POC deleted');
-  };
-
-  const getUsername = (userId: string) => {
-    return profiles.find((p) => p.user_id === userId)?.username || 'Unknown';
-  };
-
-  const getProjectName = (projectId: string) => {
-    return projects.find((p) => p.id === projectId)?.name || 'Unknown Project';
-  };
-
-  const handleUpdateRetestStatus = (findingId: string, status: RetestStatus) => {
-    if (!user) {
-      alert('You must be logged in');
-      return;
-    }
-
-    const now = new Date().toISOString();
-    setFindings((prev) =>
-      prev.map((f) =>
-        f.id === findingId
-          ? { ...f, retest_status: status, retest_date: now, retested_by: user.id }
-          : f,
-      ),
+  const getSeverityBadge = (severity: string) => {
+    const normalized = normalizeSeverity(severity);
+    const { bg, text, border } = SEVERITY_STYLES[normalized];
+    return (
+      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${bg} ${text} ${border}`}>
+        {normalized}
+      </span>
     );
-    alert(`Retest status updated to "${status}"`);
+  };
+
+  const getSeverityIcon = (severity: string) => {
+    const normalized = normalizeSeverity(severity);
+    return <AlertTriangle className={`h-5 w-5 ${SEVERITY_STYLES[normalized].text}`} />;
   };
 
   const getRetestBadge = (status: string | null) => {
@@ -346,29 +298,276 @@ export default function Findings() {
       'Not Fixed': 'secondary',
     };
     return (
-      <Badge variant={variants[status] || 'secondary'} className="ml-2">
+      <Badge variant={variants[status] ?? 'secondary'} className="ml-2">
         <RefreshCw className="h-3 w-3 mr-1" />
         {status}
       </Badge>
     );
   };
 
+  // ─── Add Finding ──────────────────────────────────────────────────────────────
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!formData.projectId || !formData.severity || !formData.title || !formData.description) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+    if (!user) {
+      toast.error('You must be logged in');
+      return;
+    }
+
+    try {
+      // 1. Create the finding
+      const res = await fetch(`${API_BASE}/findings`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          project_id: formData.projectId,
+          title: formData.title,
+          description: formData.description,
+          severity: formData.severity,
+          steps_to_reproduce: formData.stepsToReproduce || null,
+          impact: formData.impact || null,
+          remediation: formData.remediation || null,
+          affected_component: formData.affectedComponent || null,
+          cvss_score: formData.cvssScore ? parseFloat(formData.cvssScore) : null,
+          cwe_id: formData.cweId || null,
+          created_by: userId,
+        }),
+      });
+
+      if (!res.ok) {
+        let errMsg = res.statusText;
+        try { const err = await res.clone().json(); errMsg = err.message ?? errMsg; } catch (_) {}
+        console.error('POST findings failed:', res.status, errMsg);
+        toast.error(`Failed to add finding (${res.status}): ${errMsg}`);
+        return;
+      }
+
+      const newFinding: Finding = await res.json();
+
+      // 2. Upload any pending POCs
+      const uploadedPocs: FindingPoc[] = [];
+      if (pendingPocs.length > 0) {
+        for (const { file } of pendingPocs) {
+          const formPayload = new FormData();
+          formPayload.append('file', file);
+          formPayload.append('uploaded_by', userId);
+          try {
+            const pocRes = await fetch(`${API_BASE}/findings/${newFinding.id}/pocs`, {
+              method: 'POST',
+              headers: authHeadersNoContent(),
+              body: formPayload,
+            });
+            if (pocRes.ok) {
+              const poc: FindingPoc = await pocRes.json();
+              uploadedPocs.push(poc);
+            }
+          } catch (_) { /* skip failed POC uploads silently */ }
+        }
+      }
+
+      setFindings(prev => [newFinding, ...prev]);
+      setPocs(prev => ({ ...prev, [newFinding.id]: uploadedPocs }));
+      toast.success(`Finding added${uploadedPocs.length > 0 ? ` with ${uploadedPocs.length} POC(s)` : ''}!`);
+      resetForm();
+      setDialogOpen(false);
+    } catch (error) {
+      console.error('Error adding finding:', error);
+      toast.error('Failed to add finding');
+    }
+  };
+
+  // ─── Stage POC files in the Add Finding form ──────────────────────────────────
+
+  const handleFormPocSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    const allowed = ['image/jpeg', 'image/jpg', 'image/png'];
+    const valid = files.filter(f => allowed.includes(f.type));
+    if (valid.length !== files.length) toast.error('Only JPEG and PNG files are allowed');
+    const newPocs = valid.map(file => ({ file, preview: URL.createObjectURL(file) }));
+    setPendingPocs(prev => [...prev, ...newPocs]);
+    if (formPocInputRef.current) formPocInputRef.current.value = '';
+  };
+
+  const removePendingPoc = (index: number) => {
+    setPendingPocs(prev => {
+      URL.revokeObjectURL(prev[index].preview);
+      return prev.filter((_, i) => i !== index);
+    });
+  };
+
+  // ─── Delete Finding ───────────────────────────────────────────────────────────
+
+  const handleDelete = (findingId: string) => {
+    const finding = findings.find(f => f.id === findingId);
+    if (!finding || !userId || finding.created_by !== userId) {
+      toast.error('You can only delete your own findings');
+      return;
+    }
+    setDeletingFindingId(findingId);
+  };
+
+  const confirmDelete = async () => {
+    if (!deletingFindingId) return;
+    try {
+      const res = await fetch(`${API_BASE}/findings/${deletingFindingId}`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        toast.error('Failed to delete: ' + (err.message ?? res.statusText));
+        return;
+      }
+      setFindings(prev => prev.filter(f => f.id !== deletingFindingId));
+      toast.success('Finding deleted');
+    } catch (error) {
+      console.error('Error deleting finding:', error);
+      toast.error('Failed to delete finding');
+    } finally {
+      setDeletingFindingId(null);
+    }
+  };
+
+  // ─── Upload POC ───────────────────────────────────────────────────────────────
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, findingId: string) => {
+    const files = e.target.files;
+    if (!files || files.length === 0 || !user) return;
+
+    const file = files[0];
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png'];
+    if (!allowedTypes.includes(file.type)) {
+      toast.error('Only JPEG, JPG, and PNG files are allowed');
+      return;
+    }
+
+    try {
+      const formPayload = new FormData();
+      formPayload.append('file', file);
+      formPayload.append('uploaded_by', userId);
+
+      const res = await fetch(`${API_BASE}/findings/${findingId}/pocs`, {
+        method: 'POST',
+        headers: authHeadersNoContent(), // no Content-Type — let browser set multipart boundary
+        body: formPayload,
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        toast.error('Upload failed: ' + (err.message ?? res.statusText));
+        return;
+      }
+
+      const newPoc: FindingPoc = await res.json();
+      setPocs(prev => ({
+        ...prev,
+        [findingId]: [...(prev[findingId] || []), newPoc],
+      }));
+      toast.success('POC uploaded successfully!');
+    } catch (error) {
+      console.error('Error uploading POC:', error);
+      toast.error('Failed to upload POC');
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      setUploadingFindingId(null);
+    }
+  };
+
+  // ─── Delete POC ───────────────────────────────────────────────────────────────
+
+  const handleDeletePoc = async (poc: FindingPoc) => {
+    if (!userId || poc.uploaded_by !== userId) {
+      toast.error('You can only delete your own POCs');
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/findings/${poc.finding_id}/pocs/${poc.id}`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        toast.error('Failed to delete POC: ' + (err.message ?? res.statusText));
+        return;
+      }
+      setPocs(prev => ({
+        ...prev,
+        [poc.finding_id]: prev[poc.finding_id]?.filter(p => p.id !== poc.id) || [],
+      }));
+      toast.success('POC deleted');
+    } catch (error) {
+      console.error('Error deleting POC:', error);
+      toast.error('Failed to delete POC');
+    }
+  };
+
+  // ─── Update Retest Status ─────────────────────────────────────────────────────
+
+  const handleUpdateRetestStatus = async (findingId: string, status: RetestStatus) => {
+    if (!user) {
+      toast.error('You must be logged in');
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/findings/${findingId}`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          retest_status: status,
+          retest_date: new Date().toISOString(),
+          retested_by: userId,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        toast.error('Failed to update retest status: ' + (err.message ?? res.statusText));
+        return;
+      }
+
+      const updated: Finding = await res.json();
+      setFindings(prev => prev.map(f => f.id === findingId ? updated : f));
+      toast.success(`Retest status updated to "${status}"`);
+    } catch (error) {
+      console.error('Error updating retest status:', error);
+      toast.error('Failed to update retest status');
+    }
+  };
+
+  // ─── Filtered list ────────────────────────────────────────────────────────────
+
+  const filteredFindings = findings.filter(finding => {
+    const matchesSearch =
+      finding.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (finding.description?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false);
+    const matchesSeverity = severityFilter === 'all' || normalizeSeverity(finding.severity) === severityFilter;
+    const matchesProject = projectFilter === 'all' || finding.project_id === projectFilter;
+    return matchesSearch && matchesSeverity && matchesProject;
+  });
+
+  // ─── Render guards ────────────────────────────────────────────────────────────
+
   if (isLoading) {
     return (
       <DashboardLayout title="Findings" description="Loading...">
         <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </div>
       </DashboardLayout>
     );
   }
 
+  // ─── Main render ──────────────────────────────────────────────────────────────
+
   return (
-    <DashboardLayout
-      title="Findings"
-      description="View and manage all vulnerability findings"
-    >
+    <DashboardLayout title="Findings" description="View and manage all vulnerability findings">
       <div className="space-y-6">
+
         {/* Filters */}
         <div className="flex flex-col sm:flex-row gap-4">
           <div className="relative flex-1">
@@ -380,6 +579,7 @@ export default function Findings() {
               className="pl-10 bg-secondary/50"
             />
           </div>
+
           <Select value={severityFilter} onValueChange={setSeverityFilter}>
             <SelectTrigger className="w-full sm:w-40 bg-secondary/50">
               <Filter className="h-4 w-4 mr-2" />
@@ -394,29 +594,21 @@ export default function Findings() {
               <SelectItem value="Informational">Informational</SelectItem>
             </SelectContent>
           </Select>
-          {/* {(role === 'manager' || role === 'admin') && ( */}
-            <Select value={projectFilter} onValueChange={setProjectFilter}>
-              <SelectTrigger className="w-full sm:w-48 bg-secondary/50">
-                <SelectValue placeholder="Filter by Project" />
-              </SelectTrigger>
-              <SelectContent className="max-w-[calc(100vw-2rem)] w-full">
-                <SelectItem value="all" className="truncate">
-                  All Projects
+
+          <Select value={projectFilter} onValueChange={setProjectFilter}>
+            <SelectTrigger className="w-full sm:w-48 bg-secondary/50">
+              <SelectValue placeholder="Filter by Project" />
+            </SelectTrigger>
+            <SelectContent className="max-w-[calc(100vw-2rem)] w-full">
+              <SelectItem value="all">All Projects</SelectItem>
+              {projects.map(p => (
+                <SelectItem key={p.id} value={p.id} className="truncate max-w-full">
+                  <span className="truncate block max-w-[calc(100vw-4rem)]">{p.name}</span>
                 </SelectItem>
-                {projects.map((p) => (
-                  <SelectItem
-                    key={p.id}
-                    value={p.id}
-                    className="truncate max-w-full"
-                  >
-                    <span className="truncate block max-w-[calc(100vw-4rem)]">
-                      {p.name}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          {/* )} */}
+              ))}
+            </SelectContent>
+          </Select>
+
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
               <Button variant="default" className="gradient-technieum">
@@ -434,18 +626,12 @@ export default function Findings() {
                     <Label>Project *</Label>
                     <Select
                       value={formData.projectId}
-                      onValueChange={(value) =>
-                        setFormData({ ...formData, projectId: value })
-                      }
+                      onValueChange={(value) => setFormData({ ...formData, projectId: value })}
                     >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select project" />
-                      </SelectTrigger>
+                      <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
                       <SelectContent>
-                        {projects.map((p) => (
-                          <SelectItem key={p.id} value={p.id}>
-                            {p.name}
-                          </SelectItem>
+                        {projects.map(p => (
+                          <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -454,37 +640,27 @@ export default function Findings() {
                     <Label>Severity *</Label>
                     <Select
                       value={formData.severity}
-                      onValueChange={(value) =>
-                        setFormData({
-                          ...formData,
-                          severity: value as Severity,
-                        })
-                      }
+                      onValueChange={(value) => setFormData({ ...formData, severity: value as Severity })}
                     >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select severity" />
-                      </SelectTrigger>
+                      <SelectTrigger><SelectValue placeholder="Select severity" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="Critical">Critical</SelectItem>
                         <SelectItem value="High">High</SelectItem>
                         <SelectItem value="Medium">Medium</SelectItem>
                         <SelectItem value="Low">Low</SelectItem>
-                        <SelectItem value="Informational">
-                          Informational
-                        </SelectItem>
+                        <SelectItem value="Informational">Informational</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
+
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Title *</Label>
                     <Input
                       placeholder="Finding title"
                       value={formData.title}
-                      onChange={(e) =>
-                        setFormData({ ...formData, title: e.target.value })
-                      }
+                      onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                     />
                   </div>
                   <div className="space-y-2">
@@ -496,27 +672,18 @@ export default function Findings() {
                       min="0"
                       max="10"
                       value={formData.cvssScore}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          cvssScore: e.target.value,
-                        })
-                      }
+                      onChange={(e) => setFormData({ ...formData, cvssScore: e.target.value })}
                     />
                   </div>
                 </div>
+
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Affected Component</Label>
                     <Input
                       placeholder="e.g., /api/users"
                       value={formData.affectedComponent}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          affectedComponent: e.target.value,
-                        })
-                      }
+                      onChange={(e) => setFormData({ ...formData, affectedComponent: e.target.value })}
                     />
                   </div>
                   <div className="space-y-2">
@@ -524,78 +691,110 @@ export default function Findings() {
                     <Input
                       placeholder="e.g., CWE-79"
                       value={formData.cweId}
-                      onChange={(e) =>
-                        setFormData({ ...formData, cweId: e.target.value })
-                      }
+                      onChange={(e) => setFormData({ ...formData, cweId: e.target.value })}
                     />
                   </div>
                 </div>
+
                 <div className="space-y-2">
                   <Label>Description *</Label>
                   <Textarea
                     placeholder="Detailed description of the vulnerability"
                     rows={3}
                     value={formData.description}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        description: e.target.value,
-                      })
-                    }
+                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   />
                 </div>
+
                 <div className="space-y-2">
                   <Label>Steps to Reproduce</Label>
                   <Textarea
                     placeholder="Step-by-step instructions to reproduce"
                     rows={4}
                     value={formData.stepsToReproduce}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        stepsToReproduce: e.target.value,
-                      })
-                    }
+                    onChange={(e) => setFormData({ ...formData, stepsToReproduce: e.target.value })}
                   />
                 </div>
+
                 <div className="space-y-2">
                   <Label>Impact</Label>
                   <Textarea
                     placeholder="Potential impact of this vulnerability"
                     rows={2}
                     value={formData.impact}
-                    onChange={(e) =>
-                      setFormData({ ...formData, impact: e.target.value })
-                    }
+                    onChange={(e) => setFormData({ ...formData, impact: e.target.value })}
                   />
                 </div>
+
                 <div className="space-y-2">
                   <Label>Remediation</Label>
                   <Textarea
                     placeholder="Recommended remediation steps"
                     rows={3}
                     value={formData.remediation}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        remediation: e.target.value,
-                      })
-                    }
+                    onChange={(e) => setFormData({ ...formData, remediation: e.target.value })}
                   />
                 </div>
-                <div className="flex justify-end gap-3">
-                  <DialogClose asChild>
+
+                {/* POC Upload in form */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Proof of Concept (POC)</Label>
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={resetForm}
+                      size="sm"
+                      onClick={() => formPocInputRef.current?.click()}
                     >
-                      Cancel
+                      <Upload className="h-4 w-4 mr-1" />
+                      Add Images
                     </Button>
+                    <input
+                      ref={formPocInputRef}
+                      type="file"
+                      accept=".jpg,.jpeg,.png"
+                      multiple
+                      className="hidden"
+                      onChange={handleFormPocSelect}
+                    />
+                  </div>
+                  {pendingPocs.length > 0 ? (
+                    <div className="grid grid-cols-3 gap-2">
+                      {pendingPocs.map((poc, idx) => (
+                        <div key={idx} className="relative group">
+                          <img
+                            src={poc.preview}
+                            alt={poc.file.name}
+                            className="rounded-lg border border-border/50 w-full h-24 object-cover"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removePendingPoc(idx)}
+                            className="absolute top-1 right-1 h-5 w-5 rounded-full bg-destructive text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                          <p className="text-xs text-muted-foreground mt-1 truncate">{poc.file.name}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div
+                      className="border-2 border-dashed border-border/50 rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 transition-colors"
+                      onClick={() => formPocInputRef.current?.click()}
+                    >
+                      <ImageIcon className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                      <p className="text-sm text-muted-foreground">Click to upload POC screenshots</p>
+                      <p className="text-xs text-muted-foreground mt-1">JPEG, PNG up to 10MB</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex justify-end gap-3">
+                  <DialogClose asChild>
+                    <Button type="button" variant="outline" onClick={resetForm}>Cancel</Button>
                   </DialogClose>
-                  <Button type="submit" className="gradient-technieum">
-                    Submit Finding
-                  </Button>
+                  <Button type="submit" className="gradient-technieum">Submit Finding</Button>
                 </div>
               </form>
             </DialogContent>
@@ -604,29 +803,30 @@ export default function Findings() {
 
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          {(['Critical', 'High', 'Medium', 'Low', 'Informational'] as Severity[]).map(
-            (severity) => {
-              const count = findings.filter((f) => f.severity === severity).length;
-              return (
-                <Card key={severity} className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-2xl font-bold">{count}</p>
-                      <p className="text-xs text-muted-foreground">{severity}</p>
-                    </div>
-                    {getSeverityIcon(severity)}
+          {(['Critical', 'High', 'Medium', 'Low', 'Informational'] as Severity[]).map(severity => {
+            const count = findings.filter(f =>
+              normalizeSeverity(f.severity) === severity
+            ).length;
+            const { bg, text, border } = SEVERITY_STYLES[severity];
+            return (
+              <Card key={severity} className={`p-4 border ${border} ${bg}`}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className={`text-2xl font-bold ${text}`}>{count}</p>
+                    <p className="text-xs text-muted-foreground">{severity}</p>
                   </div>
-                </Card>
-              );
-            },
-          )}
+                  {getSeverityIcon(severity)}
+                </div>
+              </Card>
+            );
+          })}
         </div>
 
         {/* Findings List */}
         <div className="space-y-3">
           {filteredFindings.map((finding, index) => {
             const isExpanded = expandedFinding === finding.id;
-            const canDelete = finding.created_by === user?.id;
+            const canDelete = !!userId && finding.created_by === userId;
             const findingPocs = pocs[finding.id] || [];
 
             return (
@@ -637,9 +837,7 @@ export default function Findings() {
               >
                 <div
                   className="p-4 cursor-pointer"
-                  onClick={() =>
-                    setExpandedFinding(isExpanded ? null : finding.id)
-                  }
+                  onClick={() => setExpandedFinding(isExpanded ? null : finding.id)}
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-start gap-3 flex-1">
@@ -651,29 +849,16 @@ export default function Findings() {
                               CVSS {finding.cvss_score}
                             </span>
                           )}
-
-                          {/* Desktop/Tablet */}
-                          <Badge
-                            variant="secondary"
-                            className="text-xs hidden sm:inline-flex"
-                          >
+                          <Badge variant="secondary" className="text-xs hidden sm:inline-flex">
                             {getProjectName(finding.project_id)}
                           </Badge>
-
-                          {/* Mobile */}
-                          <Badge
-                            variant="secondary"
-                            className="text-xs max-w-[120px] sm:hidden block"
-                          >
-                            <span className="truncate block">
-                              {getProjectName(finding.project_id)}
-                            </span>
+                          <Badge variant="secondary" className="text-xs max-w-[120px] sm:hidden block">
+                            <span className="truncate block">{getProjectName(finding.project_id)}</span>
                           </Badge>
                           {findingPocs.length > 0 && (
                             <Badge variant="outline" className="text-xs">
                               <ImageIcon className="h-3 w-3 mr-1" />
-                              {findingPocs.length} POC
-                              {findingPocs.length > 1 ? 's' : ''}
+                              {findingPocs.length} POC{findingPocs.length > 1 ? 's' : ''}
                             </Badge>
                           )}
                         </div>
@@ -684,13 +869,7 @@ export default function Findings() {
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <Badge
-                        variant={
-                          finding.status === 'Open'
-                            ? 'destructive'
-                            : 'secondary'
-                        }
-                      >
+                      <Badge variant={finding.status === 'Open' ? 'destructive' : 'secondary'}>
                         {finding.status}
                       </Badge>
                       {finding.retest_status && getRetestBadge(finding.retest_status)}
@@ -698,19 +877,15 @@ export default function Findings() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDelete(finding.id);
-                          }}
+                          onClick={(e) => { e.stopPropagation(); handleDelete(finding.id); }}
                         >
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       )}
-                      {isExpanded ? (
-                        <ChevronUp className="h-5 w-5 text-muted-foreground" />
-                      ) : (
-                        <ChevronDown className="h-5 w-5 text-muted-foreground" />
-                      )}
+                      {isExpanded
+                        ? <ChevronUp className="h-5 w-5 text-muted-foreground" />
+                        : <ChevronDown className="h-5 w-5 text-muted-foreground" />
+                      }
                     </div>
                   </div>
                 </div>
@@ -719,9 +894,7 @@ export default function Findings() {
                   <div className="px-4 pb-4 pt-2 border-t border-border/50 space-y-4 animate-fade-in">
                     {finding.steps_to_reproduce && (
                       <div>
-                        <h4 className="text-sm font-semibold text-primary mb-2">
-                          Steps to Reproduce
-                        </h4>
+                        <h4 className="text-sm font-semibold text-primary mb-2">Steps to Reproduce</h4>
                         <pre className="text-sm text-muted-foreground whitespace-pre-wrap font-mono bg-secondary/30 p-3 rounded-lg">
                           {finding.steps_to_reproduce}
                         </pre>
@@ -729,19 +902,13 @@ export default function Findings() {
                     )}
                     {finding.impact && (
                       <div>
-                        <h4 className="text-sm font-semibold text-primary mb-2">
-                          Impact
-                        </h4>
-                        <p className="text-sm text-muted-foreground">
-                          {finding.impact}
-                        </p>
+                        <h4 className="text-sm font-semibold text-primary mb-2">Impact</h4>
+                        <p className="text-sm text-muted-foreground">{finding.impact}</p>
                       </div>
                     )}
                     {finding.remediation && (
                       <div>
-                        <h4 className="text-sm font-semibold text-primary mb-2">
-                          Remediation
-                        </h4>
+                        <h4 className="text-sm font-semibold text-primary mb-2">Remediation</h4>
                         <pre className="text-sm text-muted-foreground whitespace-pre-wrap bg-secondary/30 p-3 rounded-lg">
                           {finding.remediation}
                         </pre>
@@ -749,9 +916,7 @@ export default function Findings() {
                     )}
                     {finding.affected_component && (
                       <div>
-                        <h4 className="text-sm font-semibold text-primary mb-2">
-                          Affected Component
-                        </h4>
+                        <h4 className="text-sm font-semibold text-primary mb-2">Affected Component</h4>
                         <Badge variant="secondary" className="font-mono text-xs">
                           {finding.affected_component}
                         </Badge>
@@ -759,28 +924,22 @@ export default function Findings() {
                     )}
                     {finding.cwe_id && (
                       <div>
-                        <h4 className="text-sm font-semibold text-primary mb-2">
-                          CWE
-                        </h4>
-                        <Badge variant="outline" className="font-mono text-xs">
-                          {finding.cwe_id}
-                        </Badge>
+                        <h4 className="text-sm font-semibold text-primary mb-2">CWE</h4>
+                        <Badge variant="outline" className="font-mono text-xs">{finding.cwe_id}</Badge>
                       </div>
                     )}
 
-                    {/* POC Images Section */}
+                    {/* POC Images */}
                     <div>
                       <div className="flex items-center justify-between mb-2">
-                        <h4 className="text-sm font-semibold text-primary">
-                          Proof of Concept (POC)
-                        </h4>
+                        <h4 className="text-sm font-semibold text-primary">Proof of Concept (POC)</h4>
                         <div>
                           <input
                             type="file"
                             ref={fileInputRef}
                             className="hidden"
                             accept=".jpg,.jpeg,.png"
-                            onChange={(e) => handleFileUpload(e, finding.id)}
+                            onChange={(e) => handleFileUpload(e, uploadingFindingId || finding.id)}
                           />
                           <Button
                             variant="outline"
@@ -798,60 +957,45 @@ export default function Findings() {
                       </div>
                       {findingPocs.length > 0 ? (
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                          {findingPocs.map((poc) => (
+                          {findingPocs.map(poc => (
                             <div key={poc.id} className="relative group">
                               <img
-                                src={poc.file_path}
+                                src={`${STATIC_BASE}${poc.file_path}`}
                                 alt={poc.file_name}
                                 className="rounded-lg border border-border/50 w-full h-32 object-cover cursor-pointer hover:opacity-80"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  window.open(poc.file_path, '_blank');
-                                }}
+                                onClick={(e) => { e.stopPropagation(); window.open(`${STATIC_BASE}${poc.file_path}`, '_blank'); }}
                               />
-                              {poc.uploaded_by === user?.id && (
-                                <Button
-                                  variant="destructive"
-                                  size="icon"
-                                  className="absolute top-1 right-1 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleDeletePoc(poc);
-                                  }}
+                              {!!userId && poc.uploaded_by === userId && (
+                                <button
+                                  type="button"
+                                  className="absolute top-1 right-1 h-5 w-5 rounded-full bg-destructive text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 z-10"
+                                  onClick={(e) => { e.stopPropagation(); handleDeletePoc(poc); }}
+                                  title="Delete POC"
                                 >
                                   <X className="h-3 w-3" />
-                                </Button>
+                                </button>
                               )}
-                              <p className="text-xs text-muted-foreground mt-1 truncate">
-                                {poc.file_name}
-                              </p>
+                              <p className="text-xs text-muted-foreground mt-1 truncate">{poc.file_name}</p>
                             </div>
                           ))}
                         </div>
                       ) : (
-                        <p className="text-sm text-muted-foreground">
-                          No POC images uploaded yet.
-                        </p>
+                        <p className="text-sm text-muted-foreground">No POC images uploaded yet.</p>
                       )}
                     </div>
 
-                    {/* Retest Status Section */}
+                    {/* Retest Status */}
                     <div className="pt-2 border-t border-border/50">
                       <div className="flex items-center justify-between">
                         <div>
-                          <h4 className="text-sm font-semibold text-primary mb-1">
-                            Retest Status
-                          </h4>
+                          <h4 className="text-sm font-semibold text-primary mb-1">Retest Status</h4>
                           <div className="flex items-center gap-2">
                             {finding.retest_status ? (
                               <>
                                 {getRetestBadge(finding.retest_status)}
                                 {finding.retest_date && (
                                   <span className="text-xs text-muted-foreground ml-2">
-                                    Last tested:{' '}
-                                    {new Date(
-                                      finding.retest_date,
-                                    ).toLocaleDateString()}
+                                    Last tested: {new Date(finding.retest_date).toLocaleDateString()}
                                   </span>
                                 )}
                                 {finding.retested_by && (
@@ -861,23 +1005,15 @@ export default function Findings() {
                                 )}
                               </>
                             ) : (
-                              <span className="text-sm text-muted-foreground">
-                                Not retested yet
-                              </span>
+                              <span className="text-sm text-muted-foreground">Not retested yet</span>
                             )}
                           </div>
                         </div>
-                        <div
-                          className="flex gap-2"
-                          onClick={(e) => e.stopPropagation()}
-                        >
+                        <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
                           <Select
                             value={finding.retest_status || ''}
                             onValueChange={(value) =>
-                              handleUpdateRetestStatus(
-                                finding.id,
-                                value as RetestStatus,
-                              )
+                              handleUpdateRetestStatus(finding.id, value as RetestStatus)
                             }
                           >
                             <SelectTrigger className="w-32 h-8 text-xs">
@@ -886,9 +1022,7 @@ export default function Findings() {
                             <SelectContent>
                               <SelectItem value="Open">Open</SelectItem>
                               <SelectItem value="Fixed">Fixed</SelectItem>
-                              <SelectItem value="Not Fixed">
-                                Not Fixed
-                              </SelectItem>
+                              <SelectItem value="Not Fixed">Not Fixed</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
@@ -897,10 +1031,7 @@ export default function Findings() {
 
                     <div className="flex items-center gap-4 text-sm text-muted-foreground pt-2 border-t border-border/50">
                       <span>Reported by: {getUsername(finding.created_by)}</span>
-                      <span>
-                        Created:{' '}
-                        {new Date(finding.created_at).toLocaleDateString()}
-                      </span>
+                      <span>Created: {new Date(finding.created_at).toLocaleDateString()}</span>
                     </div>
                   </div>
                 )}
@@ -921,10 +1052,7 @@ export default function Findings() {
       </div>
 
       {/* Delete Confirmation Dialog */}
-      <Dialog
-        open={!!deletingFindingId}
-        onOpenChange={(open) => !open && setDeletingFindingId(null)}
-      >
+      <Dialog open={!!deletingFindingId} onOpenChange={(open) => !open && setDeletingFindingId(null)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -933,16 +1061,11 @@ export default function Findings() {
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Are you sure you want to delete this finding? This action cannot be
-            undone.
+            Are you sure you want to delete this finding? This action cannot be undone.
           </p>
           <div className="flex justify-end gap-3 mt-2">
-            <Button variant="outline" onClick={() => setDeletingFindingId(null)}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={confirmDelete}>
-              Delete
-            </Button>
+            <Button variant="outline" onClick={() => setDeletingFindingId(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={confirmDelete}>Delete</Button>
           </div>
         </DialogContent>
       </Dialog>

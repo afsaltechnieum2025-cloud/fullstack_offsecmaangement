@@ -9,7 +9,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
-import { supabase } from '@/integrations/supabase/client';
 import {
   Search,
   Plus,
@@ -48,6 +47,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 type Project = {
   id: string;
   name: string;
@@ -70,6 +71,20 @@ type Profile = {
   username: string;
 };
 
+// ─── Config ───────────────────────────────────────────────────────────────────
+
+const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:5000/api';
+
+const authHeaders = (): HeadersInit => {
+  const token = localStorage.getItem('token') ?? '';
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+};
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
 export default function Projects() {
   const { role, user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
@@ -85,8 +100,7 @@ export default function Projects() {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
-  
-  // Form state for new project
+
   const [newProject, setNewProject] = useState({
     name: '',
     client: '',
@@ -98,53 +112,26 @@ export default function Projects() {
   });
 
   useEffect(() => {
-    fetchData();
+    fetchProjects();
+    fetchProfiles();
   }, [user]);
 
-  const fetchData = async () => {
+  // ─── Fetch projects ── critical path, shows loader ────────────────────────
+
+  const fetchProjects = async () => {
     if (!user) return;
-    
     setIsLoading(true);
     try {
-      // Fetch projects
-      const { data: projectsData, error: projectsError } = await supabase
-        .from('projects')
-        .select('*');
+      const res = await fetch(`${API_BASE}/projects`, { headers: authHeaders() });
 
-      if (projectsError) throw projectsError;
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error('Projects API error:', res.status, errText);
+        throw new Error(`Projects API returned ${res.status}`);
+      }
 
-      // Fetch findings count per project
-      const { data: findingsData } = await supabase
-        .from('findings')
-        .select('project_id, severity');
-
-      // Fetch project assignments count
-      const { data: assignmentsData } = await supabase
-        .from('project_assignments')
-        .select('project_id');
-
-      // Fetch profiles for tester assignment
-      const { data: profilesData } = await supabase
-        .from('profiles')
-        .select('*');
-
-      setProfiles(profilesData || []);
-
-      // Combine data
-      const projectsWithCounts = (projectsData || []).map(project => {
-        const projectFindings = findingsData?.filter(f => f.project_id === project.id) || [];
-        const criticalFindings = projectFindings.filter(f => f.severity === 'critical');
-        const assignees = assignmentsData?.filter(a => a.project_id === project.id) || [];
-
-        return {
-          ...project,
-          findings_count: projectFindings.length,
-          critical_count: criticalFindings.length,
-          assignees_count: assignees.length,
-        };
-      });
-
-      setProjects(projectsWithCounts);
+      const data: Project[] = await res.json();
+      setProjects(data);
     } catch (error) {
       console.error('Error fetching projects:', error);
       toast.error('Failed to load projects');
@@ -152,6 +139,36 @@ export default function Projects() {
       setIsLoading(false);
     }
   };
+
+  // ─── Fetch users for assign dropdown ── non-critical, silent on failure ───
+
+  const fetchProfiles = async () => {
+    if (!user) return;
+    try {
+      // Points to your existing /api/users route
+      const res = await fetch(`${API_BASE}/users`, { headers: authHeaders() });
+
+      if (!res.ok) {
+        console.warn('Users endpoint returned:', res.status);
+        return;
+      }
+
+      const data = await res.json();
+
+      // Normalise to Profile shape — adjust field names if your users table differs
+      const normalised: Profile[] = data.map((u: any) => ({
+        id:       u.id,
+        user_id:  u.id,
+        username: u.username ?? u.name ?? u.email ?? String(u.id),
+      }));
+
+      setProfiles(normalised);
+    } catch (error) {
+      console.warn('fetchProfiles failed (non-critical):', error);
+    }
+  };
+
+  // ─── Filter ───────────────────────────────────────────────────────────────
 
   const filteredProjects = projects.filter((project) => {
     const matchesSearch =
@@ -161,6 +178,8 @@ export default function Projects() {
     return matchesSearch && matchesStatus;
   });
 
+  // ─── Helpers ─────────────────────────────────────────────────────────────
+
   const getStatusBadge = (status: string | null) => {
     const variants: Record<string, 'active' | 'completed' | 'pending' | 'overdue'> = {
       active: 'active',
@@ -168,7 +187,11 @@ export default function Projects() {
       pending: 'pending',
       overdue: 'overdue',
     };
-    return <Badge variant={variants[status || 'pending'] || 'secondary'}>{status || 'pending'}</Badge>;
+    return (
+      <Badge variant={variants[status || 'pending'] || 'secondary'}>
+        {status || 'pending'}
+      </Badge>
+    );
   };
 
   const formatDate = (dateStr: string | null) => {
@@ -180,82 +203,76 @@ export default function Projects() {
     });
   };
 
+  // ─── Create project ───────────────────────────────────────────────────────
+
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!newProject.name || !newProject.client || !newProject.targetDomain) {
       toast.error('Please fill in all required fields');
       return;
     }
 
     try {
-      const { error } = await supabase
-        .from('projects')
-        .insert({
-          name: newProject.name,
-          client: newProject.client,
-          domain: newProject.targetDomain,
-          ip_addresses: newProject.targetIPs ? newProject.targetIPs.split(',').map(ip => ip.trim()) : null,
+      const res = await fetch(`${API_BASE}/projects`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          name:         newProject.name,
+          client:       newProject.client,
+          description:  newProject.description || null,
+          domain:       newProject.targetDomain,
+          ip_addresses: newProject.targetIPs
+            ? newProject.targetIPs.split(',').map((ip) => ip.trim())
+            : null,
           start_date: newProject.startDate || null,
-          end_date: newProject.endDate || null,
+          end_date:   newProject.endDate   || null,
           created_by: user?.id,
-          status: 'active',
-        });
+          status:     'active',
+        }),
+      });
 
-      if (error) throw error;
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error('Create project error:', res.status, errText);
+        throw new Error('Failed to create project');
+      }
 
       toast.success('Project created successfully!');
       setIsDialogOpen(false);
-      setNewProject({
-        name: '',
-        client: '',
-        description: '',
-        targetDomain: '',
-        targetIPs: '',
-        startDate: '',
-        endDate: '',
-      });
-      fetchData();
+      setNewProject({ name: '', client: '', description: '', targetDomain: '', targetIPs: '', startDate: '', endDate: '' });
+      fetchProjects();
     } catch (error) {
       console.error('Error creating project:', error);
       toast.error('Failed to create project');
     }
   };
 
+  // ─── Assign tester ────────────────────────────────────────────────────────
+
   const handleAssignTester = async () => {
     if (!selectedProject || !selectedTester) {
       toast.error('Please select a tester');
       return;
     }
-
     setIsAssigning(true);
     try {
-      // Get the user_id from the profile
-      const profile = profiles.find(p => p.id === selectedTester);
-      if (!profile) {
-        toast.error('Tester not found');
-        return;
-      }
+      const profile = profiles.find((p) => p.id === selectedTester);
+      if (!profile) { toast.error('Tester not found'); return; }
 
-      const { error } = await supabase
-        .from('project_assignments')
-        .insert({
-          project_id: selectedProject.id,
-          user_id: profile.user_id,
-        });
+      const res = await fetch(`${API_BASE}/projects/${selectedProject.id}/assignments`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ user_id: profile.user_id }),
+      });
 
-      if (error) {
-        if (error.code === '23505') {
-          toast.error('Tester is already assigned to this project');
-        } else {
-          throw error;
-        }
-      } else {
-        toast.success('Tester assigned successfully!');
-        setIsAssignDialogOpen(false);
-        setSelectedTester('');
-        fetchData();
-      }
+      if (res.status === 409) { toast.error('Tester is already assigned to this project'); return; }
+      if (!res.ok) throw new Error('Failed to assign tester');
+
+      toast.success('Tester assigned successfully!');
+      setIsAssignDialogOpen(false);
+      setSelectedTester('');
+      fetchProjects();
     } catch (error) {
       console.error('Error assigning tester:', error);
       toast.error('Failed to assign tester');
@@ -270,6 +287,8 @@ export default function Projects() {
     setIsAssignDialogOpen(true);
   };
 
+  // ─── Delete project ───────────────────────────────────────────────────────
+
   const openDeleteDialog = (project: Project) => {
     setProjectToDelete(project);
     setIsDeleteDialogOpen(true);
@@ -277,21 +296,19 @@ export default function Projects() {
 
   const handleDeleteProject = async () => {
     if (!projectToDelete) return;
-
     setIsDeleting(true);
     try {
-      // Delete project (cascade will handle assignments and findings)
-      const { error } = await supabase
-        .from('projects')
-        .delete()
-        .eq('id', projectToDelete.id);
+      const res = await fetch(`${API_BASE}/projects/${projectToDelete.id}`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
 
-      if (error) throw error;
+      if (!res.ok) throw new Error('Failed to delete project');
 
       toast.success('Project deleted successfully!');
       setIsDeleteDialogOpen(false);
       setProjectToDelete(null);
-      fetchData();
+      fetchProjects();
     } catch (error) {
       console.error('Error deleting project:', error);
       toast.error('Failed to delete project');
@@ -299,6 +316,8 @@ export default function Projects() {
       setIsDeleting(false);
     }
   };
+
+  // ─── Render ───────────────────────────────────────────────────────────────
 
   if (isLoading) {
     return (
@@ -316,6 +335,7 @@ export default function Projects() {
       description="Manage and track all penetration testing engagements"
     >
       <div className="space-y-6">
+
         {/* Filters */}
         <div className="flex flex-col sm:flex-row gap-4">
           <div className="relative flex-1">
@@ -340,6 +360,7 @@ export default function Projects() {
               <SelectItem value="overdue">Overdue</SelectItem>
             </SelectContent>
           </Select>
+
           {(role === 'admin' || role === 'manager') && (
             <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
               <DialogTrigger asChild>
@@ -356,66 +377,66 @@ export default function Projects() {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Project Name *</Label>
-                      <Input 
+                      <Input
                         placeholder="e.g., Security Assessment"
                         value={newProject.name}
-                        onChange={(e) => setNewProject({...newProject, name: e.target.value})}
+                        onChange={(e) => setNewProject({ ...newProject, name: e.target.value })}
                         required
                       />
                     </div>
                     <div className="space-y-2">
                       <Label>Client Name *</Label>
-                      <Input 
+                      <Input
                         placeholder="e.g., Acme Corp"
                         value={newProject.client}
-                        onChange={(e) => setNewProject({...newProject, client: e.target.value})}
+                        onChange={(e) => setNewProject({ ...newProject, client: e.target.value })}
                         required
                       />
                     </div>
                   </div>
                   <div className="space-y-2">
                     <Label>Description</Label>
-                    <Textarea 
+                    <Textarea
                       placeholder="Project description and scope"
                       value={newProject.description}
-                      onChange={(e) => setNewProject({...newProject, description: e.target.value})}
+                      onChange={(e) => setNewProject({ ...newProject, description: e.target.value })}
                       rows={3}
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Target Domain *</Label>
-                      <Input 
+                      <Input
                         placeholder="e.g., example.com"
                         value={newProject.targetDomain}
-                        onChange={(e) => setNewProject({...newProject, targetDomain: e.target.value})}
+                        onChange={(e) => setNewProject({ ...newProject, targetDomain: e.target.value })}
                         required
                       />
                     </div>
                     <div className="space-y-2">
                       <Label>Target IPs (comma-separated)</Label>
-                      <Input 
+                      <Input
                         placeholder="e.g., 192.168.1.1, 192.168.1.2"
                         value={newProject.targetIPs}
-                        onChange={(e) => setNewProject({...newProject, targetIPs: e.target.value})}
+                        onChange={(e) => setNewProject({ ...newProject, targetIPs: e.target.value })}
                       />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Start Date</Label>
-                      <Input 
+                      <Input
                         type="date"
                         value={newProject.startDate}
-                        onChange={(e) => setNewProject({...newProject, startDate: e.target.value})}
+                        onChange={(e) => setNewProject({ ...newProject, startDate: e.target.value })}
                       />
                     </div>
                     <div className="space-y-2">
                       <Label>End Date</Label>
-                      <Input 
+                      <Input
                         type="date"
                         value={newProject.endDate}
-                        onChange={(e) => setNewProject({...newProject, endDate: e.target.value})}
+                        onChange={(e) => setNewProject({ ...newProject, endDate: e.target.value })}
                       />
                     </div>
                   </div>
@@ -432,7 +453,7 @@ export default function Projects() {
         </div>
 
         {/* Projects Grid */}
-        {/* <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {filteredProjects.map((project, index) => (
             <Card
               key={project.id}
@@ -441,41 +462,39 @@ export default function Projects() {
               style={{ animationDelay: `${index * 50}ms` }}
             >
               <CardHeader className="pb-3">
-                <div className="flex items-start justify-between">
-                  <div className="space-y-1 flex-1 min-w-0">
+                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                  <div className="space-y-1 min-w-0">
                     <CardTitle className="text-lg truncate">{project.name}</CardTitle>
                     <p className="text-sm text-muted-foreground">{project.client}</p>
                   </div>
-                  {getStatusBadge(project.status)}
+                  <div className="shrink-0">{getStatusBadge(project.status)}</div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="flex items-center gap-2 text-sm">
-                    <Globe className="h-4 w-4 text-primary" />
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex items-center gap-2 text-sm min-w-0">
+                    <Globe className="h-4 w-4 text-primary shrink-0" />
                     <span className="text-muted-foreground truncate">{project.domain || 'Not set'}</span>
                   </div>
                   <div className="flex items-center gap-2 text-sm">
-                    <Server className="h-4 w-4 text-primary" />
+                    <Server className="h-4 w-4 text-primary shrink-0" />
                     <span className="text-muted-foreground">{project.ip_addresses?.length || 0} IPs</span>
                   </div>
-                  <div className="flex items-center gap-2 text-sm">
-                    <Calendar className="h-4 w-4 text-primary" />
-                    <span className="text-muted-foreground">
-                      {formatDate(project.start_date)} - {formatDate(project.end_date)}
+                  <div className="flex items-start gap-2 text-sm col-span-1">
+                    <Calendar className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                    <span className="text-muted-foreground leading-snug">
+                      {formatDate(project.start_date)} – {formatDate(project.end_date)}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 text-sm">
-                    <UsersIcon className="h-4 w-4 text-primary" />
-                    <span className="text-muted-foreground">
-                      {project.assignees_count} Testers
-                    </span>
+                    <UsersIcon className="h-4 w-4 text-primary shrink-0" />
+                    <span className="text-muted-foreground">{project.assignees_count ?? 0} Testers</span>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between pt-2 border-t border-border/50">
+                <div className="flex flex-wrap items-center justify-between gap-y-2 pt-2 border-t border-border/50">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">{project.findings_count}</span>
+                    <span className="text-sm font-medium">{project.findings_count ?? 0}</span>
                     <span className="text-sm text-muted-foreground">Findings</span>
                     {(project.critical_count || 0) > 0 && (
                       <Badge variant="critical" className="text-xs">
@@ -483,7 +502,7 @@ export default function Projects() {
                       </Badge>
                     )}
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1">
                     {(role === 'admin' || role === 'manager') && (
                       <Button variant="ghost" size="sm" onClick={() => openAssignDialog(project)}>
                         <UserPlus className="h-4 w-4 mr-1" />
@@ -491,9 +510,9 @@ export default function Projects() {
                       </Button>
                     )}
                     {role === 'admin' && (
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         onClick={() => openDeleteDialog(project)}
                         className="text-destructive hover:text-destructive"
                       >
@@ -502,7 +521,7 @@ export default function Projects() {
                     )}
                     <Link to={`/projects/${project.id}`}>
                       <Button variant="ghost" size="sm">
-                        View Details
+                        View
                         <ChevronRight className="h-4 w-4 ml-1" />
                       </Button>
                     </Link>
@@ -511,97 +530,14 @@ export default function Projects() {
               </CardContent>
             </Card>
           ))}
-        </div> */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-  {filteredProjects.map((project, index) => (
-    <Card
-      key={project.id}
-      glow
-      className="animate-fade-in hover:border-primary/30 transition-all"
-      style={{ animationDelay: `${index * 50}ms` }}
-    >
-      <CardHeader className="pb-3">
-        {/* Stack vertically on mobile, row on sm+ */}
-        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
-          <div className="space-y-1 min-w-0">
-            <CardTitle className="text-lg truncate">{project.name}</CardTitle>
-            <p className="text-sm text-muted-foreground">{project.client}</p>
-          </div>
-          <div className="shrink-0">
-            {getStatusBadge(project.status)}
-          </div>
         </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
-          <div className="flex items-center gap-2 text-sm min-w-0">
-            <Globe className="h-4 w-4 text-primary shrink-0" />
-            <span className="text-muted-foreground truncate">{project.domain || 'Not set'}</span>
-          </div>
-          <div className="flex items-center gap-2 text-sm">
-            <Server className="h-4 w-4 text-primary shrink-0" />
-            <span className="text-muted-foreground">{project.ip_addresses?.length || 0} IPs</span>
-          </div>
-          <div className="flex items-start gap-2 text-sm col-span-1">
-            <Calendar className="h-4 w-4 text-primary shrink-0 mt-0.5" />
-            <span className="text-muted-foreground leading-snug">
-              {formatDate(project.start_date)} - {formatDate(project.end_date)}
-            </span>
-          </div>
-          <div className="flex items-center gap-2 text-sm">
-            <UsersIcon className="h-4 w-4 text-primary shrink-0" />
-            <span className="text-muted-foreground">
-              {project.assignees_count} Testers
-            </span>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center justify-between gap-y-2 pt-2 border-t border-border/50">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium">{project.findings_count}</span>
-            <span className="text-sm text-muted-foreground">Findings</span>
-            {(project.critical_count || 0) > 0 && (
-              <Badge variant="critical" className="text-xs">
-                {project.critical_count} Critical
-              </Badge>
-            )}
-          </div>
-          <div className="flex items-center gap-1">
-            {(role === 'admin' || role === 'manager') && (
-              <Button variant="ghost" size="sm" onClick={() => openAssignDialog(project)}>
-                <UserPlus className="h-4 w-4 mr-1" />
-                Assign
-              </Button>
-            )}
-            {role === 'admin' && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => openDeleteDialog(project)}
-                className="text-destructive hover:text-destructive"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            )}
-            <Link to={`/projects/${project.id}`}>
-              <Button variant="ghost" size="sm">
-                View
-                <ChevronRight className="h-4 w-4 ml-1" />
-              </Button>
-            </Link>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  ))}
-</div>
 
         {filteredProjects.length === 0 && (
           <Card className="p-12">
             <div className="text-center text-muted-foreground">
               <p className="text-lg font-medium">No projects found</p>
               <p className="text-sm mt-1">
-                {projects.length === 0 
+                {projects.length === 0
                   ? 'Create a new project to get started'
                   : 'Try adjusting your search or filter criteria'}
               </p>
@@ -623,11 +559,15 @@ export default function Projects() {
                     <SelectValue placeholder="Select a tester" />
                   </SelectTrigger>
                   <SelectContent>
-                    {profiles.map(profile => (
-                      <SelectItem key={profile.id} value={profile.id}>
-                        {profile.username}
-                      </SelectItem>
-                    ))}
+                    {profiles.length === 0 ? (
+                      <SelectItem value="__none__" disabled>No users available</SelectItem>
+                    ) : (
+                      profiles.map((profile) => (
+                        <SelectItem key={profile.id} value={profile.id}>
+                          {profile.username}
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -637,10 +577,7 @@ export default function Projects() {
                 </Button>
                 <Button variant="gradient" onClick={handleAssignTester} disabled={isAssigning}>
                   {isAssigning ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Assigning...
-                    </>
+                    <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Assigning...</>
                   ) : (
                     'Assign Tester'
                   )}
@@ -650,38 +587,29 @@ export default function Projects() {
           </DialogContent>
         </Dialog>
 
-        {/* Delete Project Confirmation Dialog */}
+        {/* Delete Confirmation Dialog */}
         <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Delete Project</AlertDialogTitle>
               <AlertDialogDescription>
-                Are you sure you want to delete <strong>{projectToDelete?.name}</strong>? 
+                Are you sure you want to delete <strong>{projectToDelete?.name}</strong>?
                 This will permanently remove all findings and assignments associated with this project.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
-              <Button 
-                variant="destructive" 
-                onClick={handleDeleteProject}
-                disabled={isDeleting}
-              >
+              <Button variant="destructive" onClick={handleDeleteProject} disabled={isDeleting}>
                 {isDeleting ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Deleting...
-                  </>
+                  <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Deleting...</>
                 ) : (
-                  <>
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Delete Project
-                  </>
+                  <><Trash2 className="h-4 w-4 mr-2" />Delete Project</>
                 )}
               </Button>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
       </div>
     </DashboardLayout>
   );
