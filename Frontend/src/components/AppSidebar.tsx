@@ -4,11 +4,16 @@ import {
   LayoutDashboard,
   FolderKanban,
   Bug,
-  BookOpen,
   Users,
   LogOut,
   ChevronLeft,
   ChevronRight,
+  Pencil,
+  TrendingUp,
+  Globe,
+  Brain,
+  Network,
+  ShieldCheck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -26,15 +31,16 @@ import { useState, useEffect } from 'react';
 import logo from '@/assets/technieum-logo.png';
 
 const navigation = [
-  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'manager', 'tester'] },
-  { name: 'Projects', href: '/projects', icon: FolderKanban, roles: ['admin', 'manager', 'tester'] },
-  { name: 'Findings', href: '/findings', icon: Bug, roles: ['admin', 'manager', 'tester'] },
-  // { name: 'Knowledge Base', href: '/knowledge-base', icon: BookOpen, roles: ['admin', 'manager', 'tester'] },
-  { name: 'check List', href: '/Check-list', icon: BookOpen, roles: ['admin', 'manager', 'tester'] },
-  { name: 'Trending', href: '/trending', icon: BookOpen, roles: ['admin', 'manager', 'tester'] },
-  { name: 'Users', href: '/users', icon: Users, roles: ['admin'] },
-  { name: 'ASM', href: '/asm', icon: Users, roles: ['admin'] },
-  { name: 'LLM Suite', href: '/llm', icon: Users, roles: ['admin'] },
+  { name: 'Dashboard',        href: '/dashboard',        icon: LayoutDashboard, roles: ['admin', 'manager', 'tester'] },
+  { name: 'Projects',         href: '/projects',         icon: FolderKanban,    roles: ['admin', 'manager', 'tester'] },
+  { name: 'Findings',         href: '/findings',         icon: Bug,             roles: ['admin', 'manager', 'tester'] },
+  { name: 'Content Creation', href: '/Content-Creation', icon: Pencil,          roles: ['admin', 'manager', 'tester'] },
+  { name: 'Trending',         href: '/trending',         icon: TrendingUp,      roles: ['admin', 'manager', 'tester'] },
+  { name: 'Users',            href: '/users',            icon: Users,           roles: ['admin'] },
+  { name: 'ASM',              href: '/asm',              icon: Globe,           roles: ['admin'] },
+  { name: 'LLM Suite',        href: '/llm',              icon: Brain,           roles: ['admin'] },
+  { name: 'TOIP',             href: '/toip',             icon: Network,         roles: ['admin'] },
+  { name: 'SAST',             href: '/sast',             icon: ShieldCheck,     roles: ['admin'] },
 ];
 
 export default function AppSidebar() {
@@ -42,11 +48,9 @@ export default function AppSidebar() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  // Auto-collapse on mobile
   const [collapsed, setCollapsed] = useState(() => window.innerWidth < 768);
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
 
-  // Re-collapse if window resizes to mobile
   useEffect(() => {
     const handleResize = () => {
       if (window.innerWidth < 768) setCollapsed(true);
@@ -68,7 +72,6 @@ export default function AppSidebar() {
 
   return (
     <>
-      {/* Mobile overlay — closes sidebar when tapping outside */}
       {!collapsed && isMobile && (
         <div
           className="fixed inset-0 bg-black/50 z-40 md:hidden"
@@ -82,31 +85,28 @@ export default function AppSidebar() {
           collapsed ? "w-16" : "w-64"
         )}
       >
-        {/* Logo */}
+        {/* Logo Header */}
         <div className={cn(
           "flex items-center border-b border-border/50 p-4 min-h-[64px]",
           collapsed ? "justify-center" : "justify-between"
         )}>
-          {/* Logo mark — always visible */}
+          {/* Logo + name — only when expanded */}
           {!collapsed && (
-            <Link to="/dashboard" className="shrink-0">
+            <Link to="/dashboard" className="flex items-start gap-2 flex-1 min-w-0">
               <img
                 src={logo}
                 alt="Technieum"
-                className={cn("w-auto", collapsed ? "h-8 mx-auto" : "h-10")}
+                className="h-10 w-auto object-contain shrink-0 mt-0.5"
               />
+              <div className="flex flex-col leading-tight">
+                <span className="font-bold text-sm text-gradient">Technieum</span>
+                <span className="font-semibold text-xs text-muted-foreground">OffSec</span>
+                <span className="font-semibold text-xs text-muted-foreground">Management Portal</span>
+              </div>
             </Link>
           )}
 
-          {/* Brand text — only when expanded */}
-          {!collapsed && (
-            <div className="flex flex-col flex-1 ml-2 min-w-0">
-              <span className="font-bold text-sm text-gradient leading-tight">OffSec</span>
-              <span className="font-bold text-sm text-gradient leading-tight">Ops</span>
-            </div>
-          )}
-
-          {/* Toggle button */}
+          {/* Toggle button — always visible */}
           <Button
             variant="ghost"
             size="icon"
@@ -126,7 +126,7 @@ export default function AppSidebar() {
                 key={item.name}
                 to={item.href}
                 title={collapsed ? item.name : undefined}
-                onClick={() => isMobile && setCollapsed(true)} // close on nav on mobile
+                onClick={() => isMobile && setCollapsed(true)}
                 className={cn(
                   "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200",
                   collapsed && "justify-center px-2",
@@ -136,7 +136,7 @@ export default function AppSidebar() {
                 )}
               >
                 <item.icon className={cn("h-5 w-5 shrink-0", isActive && "text-primary")} />
-                {!collapsed && <span className="font-medium truncate">{item.name}</span>}
+                {!collapsed && <span className="font-medium">{item.name}</span>}
               </Link>
             );
           })}
@@ -175,7 +175,6 @@ export default function AppSidebar() {
         </div>
       </aside>
 
-      {/* Sign Out Confirmation Dialog */}
       <AlertDialog open={showLogoutDialog} onOpenChange={setShowLogoutDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>

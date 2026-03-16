@@ -307,4 +307,52 @@ router.delete('/:id/assignments/:userId', async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────
+// Add these two routes to routes/projects.js
+// Paste BEFORE the module.exports line
+// ─────────────────────────────────────────────────────────────
+
+// GET /api/projects/:id/checklist
+router.get('/:id/checklist', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT * FROM project_checklists WHERE project_id = ? ORDER BY checklist_type, category, item_key`,
+      [req.params.id]
+    );
+    res.json(rows.map(r => ({ ...r, is_checked: Boolean(r.is_checked) })));
+  } catch (err) {
+    console.error('GET /projects/:id/checklist error:', err);
+    res.status(500).json({ message: err.sqlMessage || err.message || 'Failed to fetch checklist' });
+  }
+});
+
+// POST /api/projects/:id/checklist  — upsert a single item
+router.post('/:id/checklist', async (req, res) => {
+  const { checklist_type, category, item_key, is_checked, updated_by } = req.body;
+
+  if (!checklist_type || !category || !item_key) {
+    return res.status(400).json({ message: 'checklist_type, category, and item_key are required' });
+  }
+
+  try {
+    const [[{ newId }]] = await db.query(`SELECT UUID() AS newId`);
+
+    await db.query(
+      `INSERT INTO project_checklists
+         (id, project_id, checklist_type, category, item_key, is_checked, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE
+         is_checked = VALUES(is_checked),
+         updated_by = VALUES(updated_by),
+         updated_at = NOW()`,
+      [newId, req.params.id, checklist_type, category, item_key, is_checked ? 1 : 0, updated_by || null]
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('POST /projects/:id/checklist error:', err);
+    res.status(500).json({ message: err.sqlMessage || err.message || 'Failed to save checklist item' });
+  }
+});
+
 module.exports = router;

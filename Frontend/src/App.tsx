@@ -17,6 +17,8 @@ import Trending from "./pages/trending";
 import ASM from "./pages/asm";
 import LLM from "./pages/llm";
 import Checklist from "./pages/checklist";
+import ContentCreationChecklist from "./pages/checklist";
+import ContentCreation from "./pages/checklist";
 
 const queryClient = new QueryClient();
 
@@ -38,7 +40,7 @@ const App = () => (
             <Route path="/projects/:id" element={<ProtectedRoute><ProjectDetail /></ProtectedRoute>} />
             <Route path="/findings" element={<ProtectedRoute><Findings /></ProtectedRoute>} />
             <Route path="/knowledge-base" element={<ProtectedRoute><KnowledgeBase /></ProtectedRoute>} />
-            <Route path="/Check-list" element={<ProtectedRoute><Checklist /></ProtectedRoute>} />
+            <Route path="/Content-Creation" element={<ProtectedRoute><ContentCreation /></ProtectedRoute>} />
             <Route path="/trending" element={<ProtectedRoute><Trending /></ProtectedRoute>} />
             <Route path="/users" element={<ProtectedRoute><Users /></ProtectedRoute>} />
             <Route path="/asm" element={<ProtectedRoute><ASM /></ProtectedRoute>} />
