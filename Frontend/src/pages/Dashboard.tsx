@@ -417,6 +417,7 @@ export default function Dashboard() {
                         border: '1px solid hsl(222 30% 18%)',
                         borderRadius: '8px',
                       }}
+                      itemStyle={{ color: '#ffffff' }}
                     />
                   </PieChart>
                 </ResponsiveContainer>
