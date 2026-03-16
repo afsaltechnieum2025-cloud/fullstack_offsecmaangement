@@ -10,8 +10,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import {
   ArrowLeft, Globe, Bug, FileText, Download, Plus, Loader2,
-  ChevronRight, RefreshCw, Search, CheckSquare, Upload,
-  Image as ImageIcon, X, Shield, Cpu, Brain,
+  ChevronDown, ChevronUp, RefreshCw, Search,
+  CheckSquare, Upload, Image as ImageIcon, X, Shield, Cpu, Brain,
+  AlertTriangle, Trash2,
 } from 'lucide-react';
 import { generateTechnicalReport, generateManagementReport, generateRetestReport } from '@/utils/reportGenerator';
 import FindingDetailDialog from '@/components/FindingDetailDialog';
@@ -32,6 +33,7 @@ import { Textarea } from '@/components/ui/textarea';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Severity = 'Critical' | 'High' | 'Medium' | 'Low' | 'Informational';
+type RetestStatus = 'Open' | 'Fixed' | 'Not Fixed';
 
 type Project = {
   id: string; name: string; client: string;
@@ -43,7 +45,7 @@ type Project = {
 };
 
 type Finding = {
-  id: string; title: string; description: string | null; severity: string;
+  id: string; title: string; description: string | null; severity: string | number;
   cvss_score: number | null; status: string | null; created_at: string; created_by: string;
   steps_to_reproduce: string | null; impact: string | null; remediation: string | null;
   affected_component: string | null; cwe_id: string | null;
@@ -62,6 +64,68 @@ type Assignee = {
 
 // ─── API base URL ─────────────────────────────────────────────────────────────
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:5000/api';
+const STATIC_BASE = API_BASE.replace(/\/api$/, '');
+
+// ─── Severity helpers ─────────────────────────────────────────────────────────
+
+const normalizeSeverity = (s: string | number | null | undefined): Severity => {
+  const map: Record<string, Severity> = {
+    critical: 'Critical',
+    high: 'High',
+    medium: 'Medium',
+    low: 'Low',
+    informational: 'Informational',
+    info: 'Informational',
+  };
+  const raw = String(s ?? '').toLowerCase().trim();
+  if (map[raw]) return map[raw];
+  const n = parseFloat(raw);
+  if (!isNaN(n) && raw !== '') {
+    if (n >= 9.0) return 'Critical';
+    if (n >= 7.0) return 'High';
+    if (n >= 4.0) return 'Medium';
+    return 'Low';
+  }
+  return 'Informational';
+};
+
+const SEVERITY_STYLES: Record<Severity, { bg: string; text: string; border: string }> = {
+  Critical:      { bg: 'bg-red-500/10',    text: 'text-red-500',    border: 'border-red-500/30'    },
+  High:          { bg: 'bg-orange-500/10', text: 'text-orange-500', border: 'border-orange-500/30' },
+  Medium:        { bg: 'bg-yellow-500/10', text: 'text-yellow-500', border: 'border-yellow-500/30' },
+  Low:           { bg: 'bg-green-500/10',  text: 'text-green-500',  border: 'border-green-500/30'  },
+  Informational: { bg: 'bg-blue-500/10',   text: 'text-blue-500',   border: 'border-blue-500/30'   },
+};
+
+const getSeverityBadge = (severity: string | number | null | undefined) => {
+  const normalized = normalizeSeverity(severity);
+  const { bg, text, border } = SEVERITY_STYLES[normalized];
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${bg} ${text} ${border}`}>
+      {normalized}
+    </span>
+  );
+};
+
+const getSeverityIcon = (severity: string | number | null | undefined) => {
+  const normalized = normalizeSeverity(severity);
+  return <AlertTriangle className={`h-5 w-5 ${SEVERITY_STYLES[normalized].text}`} />;
+};
+
+const getRetestBadge = (status: string | null) => {
+  if (!status) return null;
+  const variants: Record<string, 'destructive' | 'secondary' | 'outline'> = {
+    Open: 'destructive',
+    Fixed: 'outline',
+    'Not Fixed': 'secondary',
+  };
+  return (
+    <Badge variant={variants[status] ?? 'secondary'} className="ml-2">
+      <RefreshCw className="h-3 w-3 mr-1" />
+      {status}
+    </Badge>
+  );
+};
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -73,12 +137,25 @@ export default function ProjectDetail() {
   const [project, setProject] = useState<Project | null>(null);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [assignees, setAssignees] = useState<Assignee[]>([]);
+  const [allUsers, setAllUsers] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+
+  // Findings tab state
+  const [expandedFinding, setExpandedFinding] = useState<string | null>(null);
+  const [pocs, setPocs] = useState<Record<string, FindingPoc[]>>({});
+  const [deletingFindingId, setDeletingFindingId] = useState<string | null>(null);
+  const [uploadingFindingId, setUploadingFindingId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [severityFilter, setSeverityFilter] = useState<string>('all');
+  const [addFindingOpen, setAddFindingOpen] = useState(false);
+
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+
   const [checklistProgress, setChecklistProgress] = useState<Record<string, boolean>>({});
-  const [searchQuery, setSearchQuery] = useState('');
-  const [addFindingOpen, setAddFindingOpen] = useState(false);
 
   const [formData, setFormData] = useState({
     severity: '' as Severity | '', title: '', description: '',
@@ -89,40 +166,6 @@ export default function ProjectDetail() {
   // POC staging
   const formPocInputRef = useRef<HTMLInputElement>(null);
   const [pendingPocs, setPendingPocs] = useState<{ file: File; preview: string }[]>([]);
-
-  // ─── Helpers ───────────────────────────────────────────────────────────────
-
-  const resetForm = () => {
-    setFormData({
-      severity: '', title: '', description: '', stepsToReproduce: '',
-      impact: '', remediation: '', affectedComponent: '', cvssScore: '', cweId: '',
-    });
-    pendingPocs.forEach(p => URL.revokeObjectURL(p.preview));
-    setPendingPocs([]);
-  };
-
-  const formatDate = (dateStr: string | null) => {
-    if (!dateStr) return 'Not set';
-    return new Date(dateStr).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-  };
-
-  const getSeverityBadge = (severity: string) => {
-    const map: Record<string, string> = {
-      critical: 'bg-red-500/10 text-red-500 border-red-500/30',
-      high:     'bg-orange-500/10 text-orange-500 border-orange-500/30',
-      medium:   'bg-yellow-500/10 text-yellow-500 border-yellow-500/30',
-      low:      'bg-green-500/10 text-green-500 border-green-500/30',
-      informational: 'bg-blue-500/10 text-blue-500 border-blue-500/30',
-      info:     'bg-blue-500/10 text-blue-500 border-blue-500/30',
-    };
-    const cls = map[severity.toLowerCase()] ?? map['info'];
-    const label = severity.charAt(0).toUpperCase() + severity.slice(1).toLowerCase();
-    return (
-      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${cls}`}>
-        {label}
-      </span>
-    );
-  };
 
   // ─── Auth headers ──────────────────────────────────────────────────────────
 
@@ -136,6 +179,31 @@ export default function ProjectDetail() {
     return token ? { Authorization: `Bearer ${token}` } : {};
   };
 
+  // ─── Helpers ───────────────────────────────────────────────────────────────
+
+  const resetForm = () => {
+    setFormData({
+      severity: '', title: '', description: '', stepsToReproduce: '',
+      impact: '', remediation: '', affectedComponent: '', cvssScore: '', cweId: '',
+    });
+    pendingPocs.forEach(p => URL.revokeObjectURL(p.preview));
+    setPendingPocs([]);
+  };
+
+  const getUsername = (uid: string | null | undefined): string => {
+    if (!uid) return 'Unknown';
+    const key = String(uid);
+    if (allUsers[key]) return allUsers[key];
+    const assignee = assignees.find(a => String(a.user_id) === key);
+    if (assignee?.username) return assignee.username;
+    return key;
+  };
+
+  const formatDate = (dateStr: string | null) => {
+    if (!dateStr) return 'Not set';
+    return new Date(dateStr).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  };
+
   // ─── Data Fetching ─────────────────────────────────────────────────────────
 
   const fetchProjectData = async () => {
@@ -147,15 +215,46 @@ export default function ProjectDetail() {
       setProject(await projectRes.json());
 
       const findingsRes = await fetch(`${API_BASE}/findings?project_id=${id}`, { headers: authHeaders() });
+      let fetchedFindings: Finding[] = [];
       if (findingsRes.ok) {
         const data: Finding[] = await findingsRes.json();
-        const order: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, informational: 4 };
-        data.sort((a, b) => (order[a.severity.toLowerCase()] ?? 5) - (order[b.severity.toLowerCase()] ?? 5));
+        const order: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, informational: 4, info: 4 };
+        data.sort((a, b) =>
+          (order[String(a.severity).toLowerCase()] ?? 5) -
+          (order[String(b.severity).toLowerCase()] ?? 5)
+        );
+        fetchedFindings = data;
         setFindings(data);
       }
 
+      if (fetchedFindings.length > 0) {
+        const pocFetches = fetchedFindings.map(f =>
+          fetch(`${API_BASE}/findings/${f.id}/pocs`, { headers: authHeaders() })
+            .then(r => r.ok ? r.json() : [])
+            .then((rows: FindingPoc[]) => ({ findingId: f.id, rows }))
+        );
+        const pocResults = await Promise.all(pocFetches);
+        const pocMap: Record<string, FindingPoc[]> = {};
+        pocResults.forEach(({ findingId, rows }) => { pocMap[findingId] = rows; });
+        setPocs(pocMap);
+      }
+
+      try {
+        const usersRes = await fetch(`${API_BASE}/users`, { headers: authHeaders() });
+        if (usersRes.ok) {
+          const usersData = await usersRes.json();
+          const map: Record<string, string> = {};
+          usersData.forEach((u: any) => {
+            map[String(u.id)] = u.username || u.name || u.email || String(u.id);
+          });
+          setAllUsers(map);
+        }
+      } catch (_) {}
+
       const assignRes = await fetch(`${API_BASE}/projects/${id}/assignments`, { headers: authHeaders() });
-      if (assignRes.ok) setAssignees(await assignRes.json());
+      if (assignRes.ok) {
+        setAssignees(await assignRes.json());
+      }
     } catch (error) {
       console.error('Error fetching project:', error);
       toast.error('Failed to load project data');
@@ -165,6 +264,32 @@ export default function ProjectDetail() {
   };
 
   useEffect(() => { fetchProjectData(); }, [id]);
+
+  // ─── Update Project Status ─────────────────────────────────────────────────
+
+  const handleUpdateStatus = async (newStatus: string) => {
+    if (!project) return;
+    setIsUpdatingStatus(true);
+    try {
+      const res = await fetch(`${API_BASE}/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error('Failed to update status: ' + (err.message ?? res.statusText));
+        return;
+      }
+      setProject(prev => prev ? { ...prev, status: newStatus } : prev);
+      toast.success(`Project status updated to "${newStatus}"`);
+    } catch (error) {
+      console.error('Error updating project status:', error);
+      toast.error('Failed to update project status');
+    } finally {
+      setIsUpdatingStatus(false);
+    }
+  };
 
   // ─── POC staging ───────────────────────────────────────────────────────────
 
@@ -213,26 +338,147 @@ export default function ProjectDetail() {
       }
 
       const newFinding: Finding = await res.json();
+      const uploadedPocs: FindingPoc[] = [];
 
-      // Upload pending POCs
       for (const { file } of pendingPocs) {
         const payload = new FormData();
         payload.append('file', file);
         payload.append('uploaded_by', userId);
         try {
-          await fetch(`${API_BASE}/findings/${newFinding.id}/pocs`, {
+          const pocRes = await fetch(`${API_BASE}/findings/${newFinding.id}/pocs`, {
             method: 'POST', headers: authHeadersNoContent(), body: payload,
           });
+          if (pocRes.ok) {
+            const poc: FindingPoc = await pocRes.json();
+            uploadedPocs.push(poc);
+          }
         } catch (_) {}
       }
 
       setFindings(prev => [newFinding, ...prev]);
+      setPocs(prev => ({ ...prev, [newFinding.id]: uploadedPocs }));
       toast.success(`Finding added${pendingPocs.length > 0 ? ` with ${pendingPocs.length} POC(s)` : ''}!`);
       resetForm();
       setAddFindingOpen(false);
     } catch (error) {
       console.error('Error adding finding:', error);
       toast.error('Failed to add finding');
+    }
+  };
+
+  // ─── Delete Finding ────────────────────────────────────────────────────────
+
+  const handleDelete = (findingId: string) => {
+    const finding = findings.find(f => f.id === findingId);
+    if (!finding || !userId || finding.created_by !== userId) {
+      toast.error('You can only delete your own findings');
+      return;
+    }
+    setDeletingFindingId(findingId);
+  };
+
+  const confirmDelete = async () => {
+    if (!deletingFindingId) return;
+    try {
+      const res = await fetch(`${API_BASE}/findings/${deletingFindingId}`, {
+        method: 'DELETE', headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        toast.error('Failed to delete: ' + (err.message ?? res.statusText));
+        return;
+      }
+      setFindings(prev => prev.filter(f => f.id !== deletingFindingId));
+      toast.success('Finding deleted');
+    } catch (error) {
+      console.error('Error deleting finding:', error);
+      toast.error('Failed to delete finding');
+    } finally {
+      setDeletingFindingId(null);
+    }
+  };
+
+  // ─── Upload POC (inline in expanded card) ─────────────────────────────────
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, findingId: string) => {
+    const files = e.target.files;
+    if (!files || files.length === 0 || !user) return;
+    const file = files[0];
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png'];
+    if (!allowedTypes.includes(file.type)) {
+      toast.error('Only JPEG, JPG, and PNG files are allowed'); return;
+    }
+    try {
+      const formPayload = new FormData();
+      formPayload.append('file', file);
+      formPayload.append('uploaded_by', userId);
+      const res = await fetch(`${API_BASE}/findings/${findingId}/pocs`, {
+        method: 'POST', headers: authHeadersNoContent(), body: formPayload,
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        toast.error('Upload failed: ' + (err.message ?? res.statusText)); return;
+      }
+      const newPoc: FindingPoc = await res.json();
+      setPocs(prev => ({ ...prev, [findingId]: [...(prev[findingId] || []), newPoc] }));
+      toast.success('POC uploaded successfully!');
+    } catch (error) {
+      console.error('Error uploading POC:', error);
+      toast.error('Failed to upload POC');
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      setUploadingFindingId(null);
+    }
+  };
+
+  // ─── Delete POC ────────────────────────────────────────────────────────────
+
+  const handleDeletePoc = async (poc: FindingPoc) => {
+    if (!userId || poc.uploaded_by !== userId) {
+      toast.error('You can only delete your own POCs'); return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/findings/${poc.finding_id}/pocs/${poc.id}`, {
+        method: 'DELETE', headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        toast.error('Failed to delete POC: ' + (err.message ?? res.statusText)); return;
+      }
+      setPocs(prev => ({
+        ...prev,
+        [poc.finding_id]: prev[poc.finding_id]?.filter(p => p.id !== poc.id) || [],
+      }));
+      toast.success('POC deleted');
+    } catch (error) {
+      console.error('Error deleting POC:', error);
+      toast.error('Failed to delete POC');
+    }
+  };
+
+  // ─── Update Retest Status ──────────────────────────────────────────────────
+
+  const handleUpdateRetestStatus = async (findingId: string, status: RetestStatus) => {
+    if (!user) { toast.error('You must be logged in'); return; }
+    try {
+      const res = await fetch(`${API_BASE}/findings/${findingId}`, {
+        method: 'PATCH', headers: authHeaders(),
+        body: JSON.stringify({
+          retest_status: status,
+          retest_date: new Date().toISOString(),
+          retested_by: userId,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        toast.error('Failed to update retest status: ' + (err.message ?? res.statusText)); return;
+      }
+      const updated: Finding = await res.json();
+      setFindings(prev => prev.map(f => f.id === findingId ? updated : f));
+      toast.success(`Retest status updated to "${status}"`);
+    } catch (error) {
+      console.error('Error updating retest status:', error);
+      toast.error('Failed to update retest status');
     }
   };
 
@@ -261,17 +507,17 @@ export default function ProjectDetail() {
   });
 
   const buildReportFindings = (fList: Finding[], projectId: string) => {
-    const sm: Record<string, 'critical'|'high'|'medium'|'low'|'info'> = {
-      critical:'critical', high:'high', medium:'medium', low:'low', informational:'info',
+    const sm: Record<string, 'critical' | 'high' | 'medium' | 'low' | 'info'> = {
+      critical: 'critical', high: 'high', medium: 'medium', low: 'low', informational: 'info',
     };
     return fList.map(f => ({
       id: f.id, projectId, title: f.title, description: f.description || '',
-      severity: sm[f.severity.toLowerCase()] || 'medium', cvssScore: f.cvss_score || 0,
+      severity: sm[String(f.severity).toLowerCase()] || 'medium', cvssScore: f.cvss_score || 0,
       stepsToReproduce: f.steps_to_reproduce || '', impact: f.impact || '',
       remediation: f.remediation || '',
       affectedAssets: f.affected_component ? [f.affected_component] : [],
       evidence: [] as string[],
-      status: (f.status?.toLowerCase() || 'open') as 'open'|'remediated'|'accepted'|'false_positive',
+      status: (f.status?.toLowerCase() || 'open') as 'open' | 'remediated' | 'accepted' | 'false_positive',
       reportedBy: f.created_by, createdAt: new Date(f.created_at), updatedAt: new Date(f.created_at),
     }));
   };
@@ -281,16 +527,16 @@ export default function ProjectDetail() {
     try {
       const pocImages: Record<string, string[]> = {};
       try {
-        const pocRes = await fetch(`${API_BASE}/findings/pocs?finding_ids=${findings.map(f=>f.id).join(',')}`, { headers: authHeaders() });
+        const pocRes = await fetch(`${API_BASE}/findings/pocs?finding_ids=${findings.map(f => f.id).join(',')}`, { headers: authHeaders() });
         if (pocRes.ok) {
           const d: { finding_id: string; file_path: string }[] = await pocRes.json();
-          d.forEach(p => { if (!pocImages[p.finding_id]) pocImages[p.finding_id]=[]; pocImages[p.finding_id].push(p.file_path); });
+          d.forEach(p => { if (!pocImages[p.finding_id]) pocImages[p.finding_id] = []; pocImages[p.finding_id].push(p.file_path); });
         }
       } catch {}
       toast.info('Generating report… This may take a moment.');
-      await generateTechnicalReport(buildReportProject(project), buildReportFindings(findings, project.id).map(f=>({...f,evidence:pocImages[f.id]||[]})), pocImages);
+      await generateTechnicalReport(buildReportProject(project), buildReportFindings(findings, project.id).map(f => ({ ...f, evidence: pocImages[f.id] || [] })), pocImages);
       toast.success('Technical Report generated successfully!');
-    } catch (error) { toast.error('Failed to generate report'); }
+    } catch { toast.error('Failed to generate report'); }
   };
 
   const handleGenerateManagementReport = async () => {
@@ -305,12 +551,23 @@ export default function ProjectDetail() {
     if (!project) return;
     try {
       await generateRetestReport(buildReportProject(project), findings.map(f => ({
-        id: f.id, title: f.title, severity: f.severity.toLowerCase(),
+        id: f.id, title: f.title, severity: String(f.severity).toLowerCase(),
         status: f.status || 'Open', retest_status: f.retest_status, retest_date: f.retest_date,
       })));
       toast.success('Retest Report generated successfully!');
     } catch { toast.error('Failed to generate retest report'); }
   };
+
+  // ─── Filtered findings ─────────────────────────────────────────────────────
+
+  const filteredFindings = findings.filter(finding => {
+    const matchesSearch =
+      finding.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (finding.description?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false);
+    const matchesSeverity =
+      severityFilter === 'all' || normalizeSeverity(finding.severity) === severityFilter;
+    return matchesSearch && matchesSeverity;
+  });
 
   // ─── Render guards ─────────────────────────────────────────────────────────
 
@@ -346,18 +603,43 @@ export default function ProjectDetail() {
           <Button variant="ghost" size="sm"><ArrowLeft className="h-4 w-4 mr-2" />Back to Projects</Button>
         </Link>
 
-        <div className="flex items-center gap-4">
+        {/* ── Status row with inline update ── */}
+        <div className="flex items-center gap-3 flex-wrap">
           <Badge variant={project.status as any} className="text-sm px-3 py-1">
             {(project.status || 'pending').charAt(0).toUpperCase() + (project.status || 'pending').slice(1)}
           </Badge>
-          <span className="text-muted-foreground">{formatDate(project.start_date)} - {formatDate(project.end_date)}</span>
+
+          {(role === 'admin' || role === 'manager') && (
+            <Select
+              value={project.status || 'pending'}
+              onValueChange={handleUpdateStatus}
+              disabled={isUpdatingStatus}
+            >
+              <SelectTrigger className="h-8 w-40 text-xs bg-secondary/50">
+                {isUpdatingStatus
+                  ? <span className="flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" />Updating…</span>
+                  : <SelectValue placeholder="Change status" />
+                }
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="completed">Completed</SelectItem>
+                <SelectItem value="pending">Pending</SelectItem>
+                <SelectItem value="overdue">Overdue</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+
+          <span className="text-muted-foreground text-sm">
+            {formatDate(project.start_date)} – {formatDate(project.end_date)}
+          </span>
         </div>
 
         <Tabs defaultValue="overview" className="space-y-6">
           <TabsList className="bg-secondary/50 flex-wrap h-auto gap-1">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="findings">Findings ({findings.length})</TabsTrigger>
-            <TabsTrigger value="team">Team ({assignees.length})</TabsTrigger>
+            <TabsTrigger value="team">Team ({assignees.length > 0 ? assignees.length : (project?.assignees_count ?? 0)})</TabsTrigger>
             {(role === 'admin' || role === 'manager') && <TabsTrigger value="reports">Reports</TabsTrigger>}
             <TabsTrigger value="checklist">Check List</TabsTrigger>
             <TabsTrigger value="sast" className="flex items-center gap-1">
@@ -407,10 +689,10 @@ export default function ProjectDetail() {
                 <CardContent>
                   <div className="grid grid-cols-2 gap-4">
                     {[
-                      { label: 'Critical', count: project.critical_count ?? findings.filter(f=>f.severity.toLowerCase()==='critical').length, color: 'text-red-500', bg: 'bg-red-500/10' },
-                      { label: 'High',     count: project.high_count     ?? findings.filter(f=>f.severity.toLowerCase()==='high').length,     color: 'text-orange-500', bg: 'bg-orange-500/10' },
-                      { label: 'Medium',   count: project.medium_count   ?? findings.filter(f=>f.severity.toLowerCase()==='medium').length,   color: 'text-yellow-500', bg: 'bg-yellow-500/10' },
-                      { label: 'Low',      count: project.low_count      ?? findings.filter(f=>f.severity.toLowerCase()==='low').length,      color: 'text-green-500',  bg: 'bg-green-500/10'  },
+                      { label: 'Critical', count: project.critical_count ?? findings.filter(f => normalizeSeverity(f.severity) === 'Critical').length, color: 'text-red-500', bg: 'bg-red-500/10' },
+                      { label: 'High',     count: project.high_count     ?? findings.filter(f => normalizeSeverity(f.severity) === 'High').length,     color: 'text-orange-500', bg: 'bg-orange-500/10' },
+                      { label: 'Medium',   count: project.medium_count   ?? findings.filter(f => normalizeSeverity(f.severity) === 'Medium').length,   color: 'text-yellow-500', bg: 'bg-yellow-500/10' },
+                      { label: 'Low',      count: project.low_count      ?? findings.filter(f => normalizeSeverity(f.severity) === 'Low').length,      color: 'text-green-500',  bg: 'bg-green-500/10'  },
                     ].map(({ label, count, color, bg }) => (
                       <div key={label} className={`text-center p-3 rounded-lg ${bg}`}>
                         <p className={`text-2xl font-bold ${color}`}>{count}</p>
@@ -425,64 +707,286 @@ export default function ProjectDetail() {
 
           {/* ── Findings ── */}
           <TabsContent value="findings" className="space-y-4">
-            <div className="flex justify-between items-center">
-              <p className="text-muted-foreground">{findings.length} findings reported</p>
-              <Button variant="gradient" onClick={() => setAddFindingOpen(true)}>
+
+            {/* Filters row */}
+            <div className="flex flex-col sm:flex-row gap-4">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search findings..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10 bg-secondary/50"
+                />
+              </div>
+              <Select value={severityFilter} onValueChange={setSeverityFilter}>
+                <SelectTrigger className="w-full sm:w-40 bg-secondary/50">
+                  <SelectValue placeholder="Severity" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Severity</SelectItem>
+                  <SelectItem value="Critical">Critical</SelectItem>
+                  <SelectItem value="High">High</SelectItem>
+                  <SelectItem value="Medium">Medium</SelectItem>
+                  <SelectItem value="Low">Low</SelectItem>
+                  <SelectItem value="Informational">Informational</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button variant="default" className="gradient-technieum" onClick={() => setAddFindingOpen(true)}>
                 <Plus className="h-4 w-4 mr-2" />Add Finding
               </Button>
             </div>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Search findings..." value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)} className="pl-10 bg-secondary/50" />
+
+            {/* Severity stat cards */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              {(['Critical', 'High', 'Medium', 'Low', 'Informational'] as Severity[]).map(severity => {
+                const count = findings.filter(f => normalizeSeverity(f.severity) === severity).length;
+                const { bg, text, border } = SEVERITY_STYLES[severity];
+                return (
+                  <Card key={severity} className={`p-4 border ${border} ${bg}`}>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className={`text-2xl font-bold ${text}`}>{count}</p>
+                        <p className="text-xs text-muted-foreground">{severity}</p>
+                      </div>
+                      {getSeverityIcon(severity)}
+                    </div>
+                  </Card>
+                );
+              })}
             </div>
-            {(() => {
-              const filtered = findings.filter(f =>
-                f.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                (f.description?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false)
-              );
-              if (filtered.length === 0) return (
-                <Card className="p-12 text-center">
-                  <Bug className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                  <p className="text-lg font-medium">{findings.length === 0 ? 'No findings yet' : 'No findings match your search'}</p>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {findings.length === 0 ? 'Start documenting vulnerabilities found during the assessment' : 'Try a different search term'}
-                  </p>
-                </Card>
-              );
-              return (
-                <div className="space-y-3">
-                  {filtered.map((finding, index) => (
-                    <Card key={finding.id} glow
-                      className="animate-fade-in cursor-pointer hover:border-primary/50 transition-colors"
-                      style={{ animationDelay: `${index * 50}ms` }}
-                      onClick={() => { setSelectedFinding(finding); setIsDetailOpen(true); }}
+
+            {/* Findings list */}
+            <div className="space-y-3">
+              {filteredFindings.map((finding, index) => {
+                const isExpanded = expandedFinding === finding.id;
+                const canDelete = !!userId && finding.created_by === userId;
+                const findingPocs = pocs[finding.id] || [];
+
+                return (
+                  <Card
+                    key={finding.id}
+                    className="animate-fade-in overflow-hidden"
+                    style={{ animationDelay: `${index * 30}ms` }}
+                  >
+                    {/* Card header */}
+                    <div
+                      className="p-4 cursor-pointer"
+                      onClick={() => setExpandedFinding(isExpanded ? null : finding.id)}
                     >
-                      <CardContent className="p-4">
-                        <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex items-start gap-3 flex-1">
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-3 mb-2">
+                            <div className="flex items-center gap-3 flex-wrap">
                               {getSeverityBadge(finding.severity)}
-                              {finding.cvss_score && <span className="text-sm text-muted-foreground">CVSS: {finding.cvss_score}</span>}
+                              {finding.cvss_score && (
+                                <span className="text-sm font-mono text-muted-foreground">
+                                  CVSS {finding.cvss_score}
+                                </span>
+                              )}
+                              <Badge variant="secondary" className="text-xs hidden sm:inline-flex">
+                                {project.name}
+                              </Badge>
+                              <Badge variant="secondary" className="text-xs max-w-[120px] sm:hidden block">
+                                <span className="truncate block">{project.name}</span>
+                              </Badge>
+                              {findingPocs.length > 0 && (
+                                <Badge variant="outline" className="text-xs">
+                                  <ImageIcon className="h-3 w-3 mr-1" />
+                                  {findingPocs.length} POC{findingPocs.length > 1 ? 's' : ''}
+                                </Badge>
+                              )}
                             </div>
-                            <h3 className="font-semibold">{finding.title}</h3>
-                            <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{finding.description}</p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Badge variant={finding.status === 'Open' ? 'destructive' : 'secondary'}>{finding.status}</Badge>
-                            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                            <h3 className="font-semibold mt-2">{finding.title}</h3>
+                            <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
+                              {finding.description}
+                            </p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-4 mt-4 text-sm text-muted-foreground">
-                          <span>Reported by: {assignees.find(a => a.user_id === finding.created_by)?.username ?? finding.created_by}</span>
-                          <span>{new Date(finding.created_at).toLocaleDateString()}</span>
+                        <div className="flex items-center gap-3">
+                          <Badge variant={finding.status === 'Open' ? 'destructive' : 'secondary'}>
+                            {finding.status}
+                          </Badge>
+                          {finding.retest_status && getRetestBadge(finding.retest_status)}
+                          {canDelete && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={(e) => { e.stopPropagation(); handleDelete(finding.id); }}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          )}
+                          {isExpanded
+                            ? <ChevronUp className="h-5 w-5 text-muted-foreground" />
+                            : <ChevronDown className="h-5 w-5 text-muted-foreground" />
+                          }
                         </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              );
-            })()}
+                      </div>
+                    </div>
+
+                    {/* Expanded detail */}
+                    {isExpanded && (
+                      <div className="px-4 pb-4 pt-2 border-t border-border/50 space-y-4 animate-fade-in">
+                        {finding.steps_to_reproduce && (
+                          <div>
+                            <h4 className="text-sm font-semibold text-primary mb-2">Steps to Reproduce</h4>
+                            <pre className="text-sm text-muted-foreground whitespace-pre-wrap font-mono bg-secondary/30 p-3 rounded-lg">
+                              {finding.steps_to_reproduce}
+                            </pre>
+                          </div>
+                        )}
+                        {finding.impact && (
+                          <div>
+                            <h4 className="text-sm font-semibold text-primary mb-2">Impact</h4>
+                            <p className="text-sm text-muted-foreground">{finding.impact}</p>
+                          </div>
+                        )}
+                        {finding.remediation && (
+                          <div>
+                            <h4 className="text-sm font-semibold text-primary mb-2">Remediation</h4>
+                            <pre className="text-sm text-muted-foreground whitespace-pre-wrap bg-secondary/30 p-3 rounded-lg">
+                              {finding.remediation}
+                            </pre>
+                          </div>
+                        )}
+                        {finding.affected_component && (
+                          <div>
+                            <h4 className="text-sm font-semibold text-primary mb-2">Affected Component</h4>
+                            <Badge variant="secondary" className="font-mono text-xs">
+                              {finding.affected_component}
+                            </Badge>
+                          </div>
+                        )}
+                        {finding.cwe_id && (
+                          <div>
+                            <h4 className="text-sm font-semibold text-primary mb-2">CWE</h4>
+                            <Badge variant="outline" className="font-mono text-xs">{finding.cwe_id}</Badge>
+                          </div>
+                        )}
+
+                        {/* POC Images */}
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="text-sm font-semibold text-primary">Proof of Concept (POC)</h4>
+                            <div>
+                              <input
+                                type="file"
+                                ref={fileInputRef}
+                                className="hidden"
+                                accept=".jpg,.jpeg,.png"
+                                onChange={(e) => handleFileUpload(e, uploadingFindingId || finding.id)}
+                              />
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setUploadingFindingId(finding.id);
+                                  fileInputRef.current?.click();
+                                }}
+                              >
+                                <Upload className="h-4 w-4 mr-1" />
+                                Upload POC
+                              </Button>
+                            </div>
+                          </div>
+                          {findingPocs.length > 0 ? (
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                              {findingPocs.map(poc => (
+                                <div key={poc.id} className="relative group">
+                                  <img
+                                    src={`${STATIC_BASE}${poc.file_path}`}
+                                    alt={poc.file_name}
+                                    className="rounded-lg border border-border/50 w-full h-32 object-cover cursor-pointer hover:opacity-80"
+                                    onClick={(e) => { e.stopPropagation(); window.open(`${STATIC_BASE}${poc.file_path}`, '_blank'); }}
+                                  />
+                                  {!!userId && poc.uploaded_by === userId && (
+                                    <button
+                                      type="button"
+                                      className="absolute top-1 right-1 h-5 w-5 rounded-full bg-destructive text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 z-10"
+                                      onClick={(e) => { e.stopPropagation(); handleDeletePoc(poc); }}
+                                      title="Delete POC"
+                                    >
+                                      <X className="h-3 w-3" />
+                                    </button>
+                                  )}
+                                  <p className="text-xs text-muted-foreground mt-1 truncate">{poc.file_name}</p>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-muted-foreground">No POC images uploaded yet.</p>
+                          )}
+                        </div>
+
+                        {/* Retest Status */}
+                        <div className="pt-2 border-t border-border/50">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <h4 className="text-sm font-semibold text-primary mb-1">Retest Status</h4>
+                              <div className="flex items-center gap-2">
+                                {finding.retest_status ? (
+                                  <>
+                                    {getRetestBadge(finding.retest_status)}
+                                    {finding.retest_date && (
+                                      <span className="text-xs text-muted-foreground ml-2">
+                                        Last tested: {new Date(finding.retest_date).toLocaleDateString()}
+                                      </span>
+                                    )}
+                                    {finding.retested_by && (
+                                      <span className="text-xs text-muted-foreground">
+                                        by {getUsername(finding.retested_by)}
+                                      </span>
+                                    )}
+                                  </>
+                                ) : (
+                                  <span className="text-sm text-muted-foreground">Not retested yet</span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+                              <Select
+                                value={finding.retest_status || ''}
+                                onValueChange={(value) =>
+                                  handleUpdateRetestStatus(finding.id, value as RetestStatus)
+                                }
+                              >
+                                <SelectTrigger className="w-32 h-8 text-xs">
+                                  <SelectValue placeholder="Update status" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="Open">Open</SelectItem>
+                                  <SelectItem value="Fixed">Fixed</SelectItem>
+                                  <SelectItem value="Not Fixed">Not Fixed</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-4 text-sm text-muted-foreground pt-2 border-t border-border/50">
+                          <span>Reported by: {getUsername(finding.created_by)}</span>
+                          <span>Created: {new Date(finding.created_at).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                    )}
+                  </Card>
+                );
+              })}
+            </div>
+
+            {filteredFindings.length === 0 && (
+              <Card className="p-12 text-center">
+                <AlertTriangle className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                <p className="text-lg font-medium">No findings found</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {findings.length === 0
+                    ? 'Start documenting vulnerabilities found during the assessment'
+                    : 'Try adjusting your search or filter criteria'}
+                </p>
+              </Card>
+            )}
           </TabsContent>
 
           {/* ── Team ── */}
@@ -556,15 +1060,15 @@ export default function ProjectDetail() {
                   <div className="flex items-center gap-4 mb-4">
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-muted-foreground">Fixed:</span>
-                      <Badge variant="outline" className="bg-green-500/10 text-green-600">{findings.filter(f=>f.retest_status==='Fixed').length}</Badge>
+                      <Badge variant="outline" className="bg-green-500/10 text-green-600">{findings.filter(f => f.retest_status === 'Fixed').length}</Badge>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-muted-foreground">Not Fixed:</span>
-                      <Badge variant="destructive">{findings.filter(f=>f.retest_status==='Not Fixed').length}</Badge>
+                      <Badge variant="destructive">{findings.filter(f => f.retest_status === 'Not Fixed').length}</Badge>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-muted-foreground">Open:</span>
-                      <Badge variant="secondary">{findings.filter(f=>!f.retest_status||f.retest_status==='Open').length}</Badge>
+                      <Badge variant="secondary">{findings.filter(f => !f.retest_status || f.retest_status === 'Open').length}</Badge>
                     </div>
                   </div>
                   <Button variant="outline" className="w-full" onClick={handleGenerateRetestReport}>
@@ -672,7 +1176,6 @@ export default function ProjectDetail() {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Add New Finding</DialogTitle></DialogHeader>
           <form onSubmit={handleSubmitFinding} className="space-y-4 mt-4">
-            {/* Locked project */}
             <div className="space-y-2">
               <Label>Project</Label>
               <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-border bg-secondary/50 text-sm">
@@ -745,7 +1248,7 @@ export default function ProjectDetail() {
                 value={formData.remediation} onChange={(e) => setFormData({ ...formData, remediation: e.target.value })} />
             </div>
 
-            {/* ── POC Upload ── */}
+            {/* POC Upload */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label>Proof of Concept (POC)</Label>
@@ -787,12 +1290,31 @@ export default function ProjectDetail() {
         </DialogContent>
       </Dialog>
 
+      {/* ── Delete Confirmation Dialog ── */}
+      <Dialog open={!!deletingFindingId} onOpenChange={(open) => !open && setDeletingFindingId(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="h-5 w-5 text-destructive" />
+              Delete Finding
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Are you sure you want to delete this finding? This action cannot be undone.
+          </p>
+          <div className="flex justify-end gap-3 mt-2">
+            <Button variant="outline" onClick={() => setDeletingFindingId(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={confirmDelete}>Delete</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* ── Finding Detail Dialog ── */}
       <FindingDetailDialog
-        finding={selectedFinding}
+        finding={selectedFinding as any}
         open={isDetailOpen}
         onClose={() => { setIsDetailOpen(false); setSelectedFinding(null); }}
-        creatorName={selectedFinding ? assignees.find(a => a.user_id === selectedFinding.created_by)?.username ?? selectedFinding.created_by : undefined}
+        creatorName={selectedFinding ? getUsername(selectedFinding.created_by) : undefined}
       />
     </DashboardLayout>
   );

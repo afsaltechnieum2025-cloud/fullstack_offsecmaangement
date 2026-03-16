@@ -76,9 +76,15 @@ router.post('/', async (req, res) => {
     created_by         = null,
   } = req.body;
 
+  const validSeverities = ['critical', 'high', 'medium', 'low', 'informational', 'info'];
   if (!project_id || !title || !severity) {
     return res.status(400).json({ message: 'project_id, title, and severity are required' });
   }
+  if (!validSeverities.includes(String(severity).toLowerCase())) {
+    return res.status(400).json({ message: `Invalid severity value: "${severity}". Must be one of: Critical, High, Medium, Low, Informational` });
+  }
+  // Normalize to title case before storing
+  const severityNormalized = String(severity).charAt(0).toUpperCase() + String(severity).slice(1).toLowerCase();
 
   try {
     const [[{ newId }]] = await db.query(`SELECT UUID() AS newId`);
@@ -87,7 +93,7 @@ router.post('/', async (req, res) => {
         (id, project_id, title, description, severity, cvss_score, status,
          steps_to_reproduce, impact, remediation, affected_component, cwe_id, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [newId, project_id, title, description, severity, cvss_score, status,
+      [newId, project_id, title, description, severityNormalized, cvss_score, status,
        steps_to_reproduce, impact, remediation, affected_component, cwe_id, created_by]
     );
     const [rows] = await db.query('SELECT * FROM findings WHERE id = ?', [newId]);

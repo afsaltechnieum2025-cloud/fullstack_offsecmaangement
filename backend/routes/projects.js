@@ -16,7 +16,8 @@ router.get('/', async (req, res) => {
         COUNT(DISTINCT CASE WHEN LOWER(f.severity) = 'high'     THEN f.id END)       AS high_count,
         COUNT(DISTINCT CASE WHEN LOWER(f.severity) = 'medium'   THEN f.id END)       AS medium_count,
         COUNT(DISTINCT CASE WHEN LOWER(f.severity) = 'low'      THEN f.id END)       AS low_count,
-        COUNT(DISTINCT CASE WHEN LOWER(f.severity) = 'info'     THEN f.id END)       AS info_count,
+        COUNT(DISTINCT CASE WHEN LOWER(f.severity) = 'info'
+                              OR LOWER(f.severity) = 'informational' THEN f.id END)  AS info_count,
         COUNT(DISTINCT pa.id)                                                         AS assignees_count
       FROM projects p
       LEFT JOIN findings            f  ON f.project_id  = p.id
@@ -25,7 +26,7 @@ router.get('/', async (req, res) => {
       ORDER BY p.created_at DESC
     `);
 
-    const projects = rows.map(row => ({
+    res.json(rows.map(row => ({
       ...row,
       ip_addresses:    row.ip_addresses
         ? (typeof row.ip_addresses === 'string' ? JSON.parse(row.ip_addresses) : row.ip_addresses)
@@ -37,12 +38,10 @@ router.get('/', async (req, res) => {
       low_count:       Number(row.low_count),
       info_count:      Number(row.info_count),
       assignees_count: Number(row.assignees_count),
-    }));
-
-    res.json(projects);
+    })));
   } catch (err) {
     console.error('GET /api/projects error:', err);
-    res.status(500).json({ message: 'Failed to fetch projects' });
+    res.status(500).json({ message: err.sqlMessage || err.message || 'Failed to fetch projects' });
   }
 });
 
@@ -59,7 +58,8 @@ router.get('/:id', async (req, res) => {
         COUNT(DISTINCT CASE WHEN LOWER(f.severity) = 'high'     THEN f.id END)       AS high_count,
         COUNT(DISTINCT CASE WHEN LOWER(f.severity) = 'medium'   THEN f.id END)       AS medium_count,
         COUNT(DISTINCT CASE WHEN LOWER(f.severity) = 'low'      THEN f.id END)       AS low_count,
-        COUNT(DISTINCT CASE WHEN LOWER(f.severity) = 'info'     THEN f.id END)       AS info_count,
+        COUNT(DISTINCT CASE WHEN LOWER(f.severity) = 'info'
+                              OR LOWER(f.severity) = 'informational' THEN f.id END)  AS info_count,
         COUNT(DISTINCT pa.id)                                                         AS assignees_count
       FROM projects p
       LEFT JOIN findings            f  ON f.project_id  = p.id
@@ -70,24 +70,23 @@ router.get('/:id', async (req, res) => {
 
     if (rows.length === 0) return res.status(404).json({ message: 'Project not found' });
 
-    const project = {
-      ...rows[0],
-      ip_addresses:    rows[0].ip_addresses
-        ? (typeof rows[0].ip_addresses === 'string' ? JSON.parse(rows[0].ip_addresses) : rows[0].ip_addresses)
+    const row = rows[0];
+    res.json({
+      ...row,
+      ip_addresses:    row.ip_addresses
+        ? (typeof row.ip_addresses === 'string' ? JSON.parse(row.ip_addresses) : row.ip_addresses)
         : null,
-      findings_count:  Number(rows[0].findings_count),
-      critical_count:  Number(rows[0].critical_count),
-      high_count:      Number(rows[0].high_count),
-      medium_count:    Number(rows[0].medium_count),
-      low_count:       Number(rows[0].low_count),
-      info_count:      Number(rows[0].info_count),
-      assignees_count: Number(rows[0].assignees_count),
-    };
-
-    res.json(project);
+      findings_count:  Number(row.findings_count),
+      critical_count:  Number(row.critical_count),
+      high_count:      Number(row.high_count),
+      medium_count:    Number(row.medium_count),
+      low_count:       Number(row.low_count),
+      info_count:      Number(row.info_count),
+      assignees_count: Number(row.assignees_count),
+    });
   } catch (err) {
     console.error('GET /api/projects/:id error:', err);
-    res.status(500).json({ message: 'Failed to fetch project' });
+    res.status(500).json({ message: err.sqlMessage || err.message || 'Failed to fetch project' });
   }
 });
 
@@ -96,15 +95,9 @@ router.get('/:id', async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 router.post('/', async (req, res) => {
   const {
-    name,
-    client,
-    description  = null,
-    domain,
-    ip_addresses = null,
-    start_date   = null,
-    end_date     = null,
-    created_by   = null,
-    status       = 'active',
+    name, client, description = null, domain,
+    ip_addresses = null, start_date = null, end_date = null,
+    created_by = null, status = 'active',
   } = req.body;
 
   if (!name || !client || !domain) {
@@ -113,42 +106,99 @@ router.post('/', async (req, res) => {
 
   try {
     const [[{ newId }]] = await db.query(`SELECT UUID() AS newId`);
-
     await db.query(
-      `INSERT INTO projects
-        (id, name, client, description, domain, ip_addresses, start_date, end_date, created_by, status)
+      `INSERT INTO projects (id, name, client, description, domain, ip_addresses, start_date, end_date, created_by, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        newId,
-        name,
-        client,
-        description,
-        domain,
-        ip_addresses ? JSON.stringify(ip_addresses) : null,
-        start_date || null,
-        end_date   || null,
-        created_by || null,
-        status,
-      ]
+      [newId, name, client, description, domain,
+       ip_addresses ? JSON.stringify(ip_addresses) : null,
+       start_date || null, end_date || null, created_by || null, status]
     );
-
     const [rows] = await db.query('SELECT * FROM projects WHERE id = ?', [newId]);
-    const project = {
+    res.status(201).json({
       ...rows[0],
-      ip_addresses:    rows[0].ip_addresses ? JSON.parse(rows[0].ip_addresses) : null,
-      findings_count:  0,
-      critical_count:  0,
-      high_count:      0,
-      medium_count:    0,
-      low_count:       0,
-      info_count:      0,
-      assignees_count: 0,
-    };
-
-    res.status(201).json(project);
+      ip_addresses: rows[0].ip_addresses ? JSON.parse(rows[0].ip_addresses) : null,
+      findings_count: 0, critical_count: 0, high_count: 0,
+      medium_count: 0, low_count: 0, info_count: 0, assignees_count: 0,
+    });
   } catch (err) {
     console.error('POST /api/projects error:', err);
-    res.status(500).json({ message: 'Failed to create project' });
+    res.status(500).json({ message: err.sqlMessage || err.message || 'Failed to create project' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+//  PATCH /api/projects/:id  ← partial update (status, etc.)
+// ─────────────────────────────────────────────────────────────
+router.patch('/:id', async (req, res) => {
+  const { id } = req.params;
+  const fields  = req.body;
+
+  const allowed = [
+    'name', 'client', 'description', 'domain',
+    'ip_addresses', 'status', 'start_date', 'end_date',
+  ];
+
+  const keys   = Object.keys(fields).filter(k => allowed.includes(k));
+  const values = keys.map(k => {
+    // Serialize ip_addresses array back to JSON string for storage
+    if (k === 'ip_addresses' && Array.isArray(fields[k])) {
+      return JSON.stringify(fields[k]);
+    }
+    return fields[k];
+  });
+
+  if (keys.length === 0) {
+    return res.status(400).json({ message: 'No valid fields to update' });
+  }
+
+  const setClauses = keys.map(k => `${k} = ?`).join(', ');
+
+  try {
+    const [result] = await db.query(
+      `UPDATE projects SET ${setClauses} WHERE id = ?`,
+      [...values, id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
+    // Return the updated row with counts (same shape as GET /:id)
+    const [rows] = await db.query(`
+      SELECT
+        p.*,
+        COUNT(DISTINCT f.id)                                                         AS findings_count,
+        COUNT(DISTINCT CASE WHEN LOWER(f.severity) = 'critical' THEN f.id END)       AS critical_count,
+        COUNT(DISTINCT CASE WHEN LOWER(f.severity) = 'high'     THEN f.id END)       AS high_count,
+        COUNT(DISTINCT CASE WHEN LOWER(f.severity) = 'medium'   THEN f.id END)       AS medium_count,
+        COUNT(DISTINCT CASE WHEN LOWER(f.severity) = 'low'      THEN f.id END)       AS low_count,
+        COUNT(DISTINCT CASE WHEN LOWER(f.severity) = 'info'
+                              OR LOWER(f.severity) = 'informational' THEN f.id END)  AS info_count,
+        COUNT(DISTINCT pa.id)                                                         AS assignees_count
+      FROM projects p
+      LEFT JOIN findings            f  ON f.project_id  = p.id
+      LEFT JOIN project_assignments pa ON pa.project_id = p.id
+      WHERE p.id = ?
+      GROUP BY p.id
+    `, [id]);
+
+    const row = rows[0];
+    res.json({
+      ...row,
+      ip_addresses:    row.ip_addresses
+        ? (typeof row.ip_addresses === 'string' ? JSON.parse(row.ip_addresses) : row.ip_addresses)
+        : null,
+      findings_count:  Number(row.findings_count),
+      critical_count:  Number(row.critical_count),
+      high_count:      Number(row.high_count),
+      medium_count:    Number(row.medium_count),
+      low_count:       Number(row.low_count),
+      info_count:      Number(row.info_count),
+      assignees_count: Number(row.assignees_count),
+    });
+  } catch (err) {
+    console.error('PATCH /api/projects/:id error:', err);
+    res.status(500).json({ message: err.sqlMessage || err.message || 'Failed to update project' });
   }
 });
 
@@ -158,15 +208,62 @@ router.post('/', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const [result] = await db.query('DELETE FROM projects WHERE id = ?', [req.params.id]);
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: 'Project not found' });
-    }
-
+    if (result.affectedRows === 0) return res.status(404).json({ message: 'Project not found' });
     res.json({ message: 'Project deleted successfully' });
   } catch (err) {
     console.error('DELETE /api/projects/:id error:', err);
-    res.status(500).json({ message: 'Failed to delete project' });
+    res.status(500).json({ message: err.sqlMessage || err.message || 'Failed to delete project' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+//  GET /api/projects/:id/assignments
+//  Returns assigned testers with username from users table
+// ─────────────────────────────────────────────────────────────
+router.get('/:id/assignments', async (req, res) => {
+  try {
+    const [assignments] = await db.query(
+      `SELECT pa.id, pa.user_id, pa.assigned_at
+       FROM project_assignments pa
+       WHERE pa.project_id = ?
+       ORDER BY pa.assigned_at ASC`,
+      [req.params.id]
+    );
+
+    if (assignments.length === 0) return res.json([]);
+
+    const userIds      = assignments.map(a => a.user_id);
+    const placeholders = userIds.map(() => '?').join(',');
+    const [users]      = await db.query(
+      `SELECT * FROM users WHERE id IN (${placeholders})`,
+      userIds
+    );
+    console.log('Users columns:', users.length > 0 ? Object.keys(users[0]) : 'no users found');
+    console.log('Users data:', JSON.stringify(users));
+
+    const userMap = {};
+    users.forEach(u => {
+      const name = u.username || u.user_name || u.name || u.full_name || u.display_name || u.email || String(u.id);
+      userMap[String(u.id)] = name;
+    });
+
+    const result = assignments.map(a => ({
+      ...a,
+      username: userMap[String(a.user_id)] || String(a.user_id),
+    }));
+
+    res.json(result);
+  } catch (err) {
+    console.error('GET /api/projects/:id/assignments error:', err);
+    try {
+      const [rows] = await db.query(
+        `SELECT id, user_id, assigned_at, user_id AS username FROM project_assignments WHERE project_id = ?`,
+        [req.params.id]
+      );
+      res.json(rows);
+    } catch (fallbackErr) {
+      res.status(500).json({ message: err.sqlMessage || err.message || 'Failed to fetch assignments' });
+    }
   }
 });
 
@@ -175,45 +272,38 @@ router.delete('/:id', async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 router.post('/:id/assignments', async (req, res) => {
   const { user_id } = req.body;
-
-  if (!user_id) {
-    return res.status(400).json({ message: 'user_id is required' });
-  }
+  if (!user_id) return res.status(400).json({ message: 'user_id is required' });
 
   try {
     const [[{ newId }]] = await db.query(`SELECT UUID() AS newId`);
-
     await db.query(
       `INSERT INTO project_assignments (id, project_id, user_id) VALUES (?, ?, ?)`,
       [newId, req.params.id, user_id]
     );
-
     res.status(201).json({ message: 'Tester assigned successfully' });
   } catch (err) {
     if (err.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({ message: 'Tester is already assigned to this project' });
     }
     console.error('POST /api/projects/:id/assignments error:', err);
-    res.status(500).json({ message: 'Failed to assign tester' });
+    res.status(500).json({ message: err.sqlMessage || err.message || 'Failed to assign tester' });
   }
 });
 
 // ─────────────────────────────────────────────────────────────
-//  GET /api/projects/:id/assignments
+//  DELETE /api/projects/:id/assignments/:userId
 // ─────────────────────────────────────────────────────────────
-router.get('/:id/assignments', async (req, res) => {
+router.delete('/:id/assignments/:userId', async (req, res) => {
   try {
-    const [rows] = await db.query(
-      `SELECT pa.id, pa.user_id, pa.assigned_at, u.username
-       FROM project_assignments pa
-       LEFT JOIN users u ON u.id = pa.user_id
-       WHERE pa.project_id = ?`,
-      [req.params.id]
+    const [result] = await db.query(
+      'DELETE FROM project_assignments WHERE project_id = ? AND user_id = ?',
+      [req.params.id, req.params.userId]
     );
-    res.json(rows);
+    if (result.affectedRows === 0) return res.status(404).json({ message: 'Assignment not found' });
+    res.json({ message: 'Tester unassigned successfully' });
   } catch (err) {
-    console.error('GET /api/projects/:id/assignments error:', err);
-    res.status(500).json({ message: 'Failed to fetch assignments' });
+    console.error('DELETE /api/projects/:id/assignments/:userId error:', err);
+    res.status(500).json({ message: err.sqlMessage || err.message || 'Failed to unassign tester' });
   }
 });
 

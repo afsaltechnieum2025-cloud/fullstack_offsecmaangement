@@ -34,21 +34,23 @@ import {
 // ─── Colors ───────────────────────────────────────────────────────────────────
 
 const severityColors = {
-  critical: '#ef4444',
-  high: '#f97316',
-  medium: '#eab308',
-  low: '#22c55e',
-  info: '#3b82f6',
+  Critical:      '#ef4444',
+  High:          '#f97316',
+  Medium:        '#eab308',
+  Low:           '#22c55e',
+  Informational: '#3b82f6',
 };
 
 const statusColors = {
-  active: '#10b981',
+  active:    '#10b981',
   completed: '#0ea5e9',
-  pending: '#f59e0b',
-  overdue: '#ef4444',
+  pending:   '#f59e0b',
+  overdue:   '#ef4444',
 };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+type Severity = 'Critical' | 'High' | 'Medium' | 'Low' | 'Informational';
 
 interface Project {
   id: string;
@@ -63,6 +65,15 @@ interface Project {
   info_count?: number;
   assignees_count: number;
   assignedTesters?: string[];
+}
+
+interface Finding {
+  id: string;
+  project_id: string;
+  title: string;
+  severity: string | number;
+  status: string | null;
+  created_at: string;
 }
 
 interface TeamMember {
@@ -84,36 +95,82 @@ const authHeaders = (): HeadersInit => {
   };
 };
 
+// ─── Severity normalization — identical to Findings.tsx / ProjectDetail.tsx ───
+
+const normalizeSeverity = (s: string | number | null | undefined): Severity => {
+  const map: Record<string, Severity> = {
+    critical:      'Critical',
+    high:          'High',
+    medium:        'Medium',
+    low:           'Low',
+    informational: 'Informational',
+    info:          'Informational',
+  };
+  const raw = String(s ?? '').toLowerCase().trim();
+  if (map[raw]) return map[raw];
+  // Numeric CVSS fallback — only fires when value is actually numeric
+  const n = parseFloat(raw);
+  if (!isNaN(n) && raw !== '') {
+    if (n >= 9.0) return 'Critical';
+    if (n >= 7.0) return 'High';
+    if (n >= 4.0) return 'Medium';
+    return 'Low';
+  }
+  return 'Informational';
+};
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
   const { user, role, username } = useAuth();
 
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects]       = useState<Project[]>([]);
+  const [allFindings, setAllFindings] = useState<Finding[]>([]);
+  const [isLoadingFindings, setIsLoadingFindings] = useState(false);
 
   useEffect(() => {
-    fetchProjects();
-    fetchTeamMembers();
+    if (user) {
+      fetchProjects();
+      fetchTeamMembers();
+    }
   }, [user]);
 
-  // ─── Fetch projects from MySQL via Express ──────────────────────────────────
+  // ─── Fetch projects ─────────────────────────────────────────────────────────
 
   const fetchProjects = async () => {
     if (!user) return;
     try {
       const res = await fetch(`${API_BASE}/projects`, { headers: authHeaders() });
-
-      if (!res.ok) {
-        console.error('Projects API error:', res.status);
-        throw new Error('Failed to fetch projects');
-      }
-
+      if (!res.ok) throw new Error('Failed to fetch projects');
       const data: Project[] = await res.json();
       setProjects(data);
+      // Once we have projects, fetch all findings for live counts
+      fetchAllFindings(data);
     } catch (error) {
       console.error('Error fetching projects:', error);
       toast.error('Failed to load projects');
+    }
+  };
+
+  // ─── Fetch ALL findings across all projects (live, like Findings.tsx) ────────
+
+  const fetchAllFindings = async (projectList: Project[]) => {
+    if (!projectList.length) return;
+    setIsLoadingFindings(true);
+    try {
+      // Fetch per project in parallel — same pattern as Findings.tsx
+      const fetches = projectList.map(p =>
+        fetch(`${API_BASE}/findings?project_id=${p.id}`, { headers: authHeaders() })
+          .then(r => r.ok ? r.json() : [])
+          .catch(() => [])
+      );
+      const results: Finding[][] = await Promise.all(fetches);
+      setAllFindings(results.flat());
+    } catch (error) {
+      console.error('Error fetching findings:', error);
+    } finally {
+      setIsLoadingFindings(false);
     }
   };
 
@@ -131,7 +188,7 @@ export default function Dashboard() {
     }
   };
 
-  // ─── Derived stats ──────────────────────────────────────────────────────────
+  // ─── Derived stats — computed from LIVE findings using normalizeSeverity ─────
 
   const stats = useMemo(() => {
     // Testers only see their assigned projects
@@ -139,44 +196,77 @@ export default function Dashboard() {
       ? projects.filter(p => user && p.assignedTesters?.includes(String(user.id)))
       : projects;
 
+    const projectIds = new Set(userProjects.map(p => p.id));
+
+    // Filter findings to only the projects this user can see
+    const userFindings = allFindings.filter(f => projectIds.has(f.project_id));
+
+    // Count by normalized severity — same normalizeSeverity as Findings.tsx
+    const criticalFindings   = userFindings.filter(f => normalizeSeverity(f.severity) === 'Critical').length;
+    const highFindings        = userFindings.filter(f => normalizeSeverity(f.severity) === 'High').length;
+    const mediumFindings      = userFindings.filter(f => normalizeSeverity(f.severity) === 'Medium').length;
+    const lowFindings         = userFindings.filter(f => normalizeSeverity(f.severity) === 'Low').length;
+    const infoFindings        = userFindings.filter(f => normalizeSeverity(f.severity) === 'Informational').length;
+
     return {
       totalProjects:     userProjects.length,
       activeProjects:    userProjects.filter(p => p.status === 'active').length,
       completedProjects: userProjects.filter(p => p.status === 'completed').length,
       overdueProjects:   userProjects.filter(p => p.status === 'overdue').length,
-      // findings_count / critical_count come pre-computed from the API (JOIN in SQL)
-      totalFindings:    userProjects.reduce((sum, p) => sum + (p.findings_count ?? 0), 0),
-      criticalFindings: userProjects.reduce((sum, p) => sum + (p.critical_count ?? 0), 0),
-      highFindings:     userProjects.reduce((sum, p) => sum + (p.high_count ?? 0), 0),
-      mediumFindings:   userProjects.reduce((sum, p) => sum + (p.medium_count ?? 0), 0),
-      lowFindings:      userProjects.reduce((sum, p) => sum + (p.low_count ?? 0), 0),
-      infoFindings:     userProjects.reduce((sum, p) => sum + (p.info_count ?? 0), 0),
+      totalFindings:     userFindings.length,
+      criticalFindings,
+      highFindings,
+      mediumFindings,
+      lowFindings,
+      infoFindings,
     };
-  }, [user, role, projects]);
+  }, [user, role, projects, allFindings]);
+
+  // ─── Chart data ─────────────────────────────────────────────────────────────
 
   const severityData = [
-    { name: 'Critical', value: stats.criticalFindings, color: severityColors.critical },
-    { name: 'High',     value: stats.highFindings,     color: severityColors.high },
-    { name: 'Medium',   value: stats.mediumFindings,   color: severityColors.medium },
-    { name: 'Low',      value: stats.lowFindings,      color: severityColors.low },
-    { name: 'Info',     value: stats.infoFindings,     color: severityColors.info },
+    { name: 'Critical',      value: stats.criticalFindings, color: severityColors.Critical      },
+    { name: 'High',          value: stats.highFindings,     color: severityColors.High          },
+    { name: 'Medium',        value: stats.mediumFindings,   color: severityColors.Medium        },
+    { name: 'Low',           value: stats.lowFindings,      color: severityColors.Low           },
+    { name: 'Informational', value: stats.infoFindings,     color: severityColors.Informational },
   ];
 
   const projectStatusData = [
-    { name: 'Active',    value: stats.activeProjects,                                        color: statusColors.active },
-    { name: 'Completed', value: stats.completedProjects,                                     color: statusColors.completed },
-    { name: 'Pending',   value: projects.filter(p => p.status === 'pending').length,         color: statusColors.pending },
-    { name: 'Overdue',   value: stats.overdueProjects,                                       color: statusColors.overdue },
+    { name: 'Active',    value: stats.activeProjects,                                    color: statusColors.active    },
+    { name: 'Completed', value: stats.completedProjects,                                 color: statusColors.completed },
+    { name: 'Pending',   value: projects.filter(p => p.status === 'pending').length,     color: statusColors.pending   },
+    { name: 'Overdue',   value: stats.overdueProjects,                                   color: statusColors.overdue   },
   ];
 
-  const monthlyData = [
-    { month: 'Jul', findings: 12, projects: 2 },
-    { month: 'Aug', findings: 18, projects: 3 },
-    { month: 'Sep', findings: 24, projects: 4 },
-    { month: 'Oct', findings: 35, projects: 4 },
-    { month: 'Nov', findings: 28, projects: 3 },
-    { month: 'Dec', findings: 7,  projects: 2 },
-  ];
+  // Monthly trend — computed from live allFindings by created_at month
+  const monthlyData = useMemo(() => {
+    const months: Record<string, { month: string; findings: number; projects: Set<string> }> = {};
+    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+    allFindings.forEach(f => {
+      const d = new Date(f.created_at);
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      if (!months[key]) {
+        months[key] = { month: monthNames[d.getMonth()], findings: 0, projects: new Set() };
+      }
+      months[key].findings++;
+      months[key].projects.add(f.project_id);
+    });
+
+    // Return 4 past months + current month + 1 next month = 6 total
+    const now = new Date();
+    return Array.from({ length: 6 }, (_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - 4 + i, 1);
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      const entry = months[key];
+      return {
+        month:    monthNames[d.getMonth()],
+        findings: entry?.findings ?? 0,
+        projects: entry ? entry.projects.size : 0,
+      };
+    });
+  }, [allFindings]);
 
   const recentProjects = useMemo(() => {
     if (role === 'admin') return projects.slice(0, 4);
@@ -184,6 +274,11 @@ export default function Dashboard() {
       .filter(p => user && p.assignedTesters?.includes(String(user.id)))
       .slice(0, 4);
   }, [user, role, projects]);
+
+  // ─── Per-project live finding count helper ────────────────────────────────
+
+  const getProjectFindingCount = (projectId: string) =>
+    allFindings.filter(f => f.project_id === projectId).length;
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
@@ -268,10 +363,33 @@ export default function Dashboard() {
           </Card>
         </div>
 
+        {/* Severity breakdown bar — quick glance */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          {(
+            [
+              { label: 'Critical',      count: stats.criticalFindings, bg: 'bg-red-500/10',    text: 'text-red-500',    border: 'border-red-500/30'    },
+              { label: 'High',          count: stats.highFindings,     bg: 'bg-orange-500/10', text: 'text-orange-500', border: 'border-orange-500/30' },
+              { label: 'Medium',        count: stats.mediumFindings,   bg: 'bg-yellow-500/10', text: 'text-yellow-500', border: 'border-yellow-500/30' },
+              { label: 'Low',           count: stats.lowFindings,      bg: 'bg-green-500/10',  text: 'text-green-500',  border: 'border-green-500/30'  },
+              { label: 'Informational', count: stats.infoFindings,     bg: 'bg-blue-500/10',   text: 'text-blue-500',   border: 'border-blue-500/30'   },
+            ] as const
+          ).map(({ label, count, bg, text, border }) => (
+            <Card key={label} className={`p-4 border ${border} ${bg} animate-fade-in`}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className={`text-2xl font-bold ${text}`}>{count}</p>
+                  <p className="text-xs text-muted-foreground">{label}</p>
+                </div>
+                <AlertTriangle className={`h-5 w-5 ${text}`} />
+              </div>
+            </Card>
+          ))}
+        </div>
+
         {/* Charts Row */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-          {/* Findings by Severity */}
+          {/* Findings by Severity — pie */}
           <Card className="animate-fade-in" style={{ animationDelay: '200ms' }}>
             <CardHeader>
               <CardTitle className="text-lg">Findings by Severity</CardTitle>
@@ -316,7 +434,7 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
-          {/* Findings Trend */}
+          {/* Findings Trend — live from allFindings */}
           <Card className="lg:col-span-2 animate-fade-in hidden sm:block" style={{ animationDelay: '250ms' }}>
             <CardHeader>
               <CardTitle className="text-lg">Findings Trend</CardTitle>
@@ -358,7 +476,7 @@ export default function Dashboard() {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-          {/* Recent Projects */}
+          {/* Recent Projects — finding count from live data */}
           <Card className="animate-fade-in" style={{ animationDelay: '300ms' }}>
             <CardHeader>
               <CardTitle className="text-lg">Recent Projects</CardTitle>
@@ -379,7 +497,7 @@ export default function Dashboard() {
                         {project.status}
                       </Badge>
                       <span className="text-sm text-muted-foreground whitespace-nowrap">
-                        {project.findings_count} findings
+                        {getProjectFindingCount(project.id)} findings
                       </span>
                     </div>
                   </div>
