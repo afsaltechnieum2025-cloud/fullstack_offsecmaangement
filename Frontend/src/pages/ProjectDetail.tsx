@@ -155,6 +155,9 @@ export default function ProjectDetail() {
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
   const [isDetailOpen, setIsDetailOpen]       = useState(false);
 
+  // Active checklist sub-tab
+  const [activeChecklistTab, setActiveChecklistTab] = useState<CLType>('web');
+
   // Checklist DB state — one map per type
   const [clProgress, setClProgress]   = useState<Record<string, Record<string, boolean>>>({
     web: {}, api: {}, cloud: {}, aiLlm: {},
@@ -503,11 +506,9 @@ export default function ProjectDetail() {
 
   // ─── Checklist renderer ────────────────────────────────────────────────────
 
-  const renderChecklist = (
+  const renderChecklistContent = (
     type: CLType,
     data: { category: string; icon: string; items: string[] }[],
-    title: string,
-    subtitle: string
   ) => {
     const prog     = clProgress[type] || {};
     const totalAll = data.reduce((s, sec) => s + sec.items.length, 0);
@@ -515,77 +516,85 @@ export default function ProjectDetail() {
     const pctAll   = totalAll > 0 ? Math.round((doneAll / totalAll) * 100) : 0;
 
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <CheckSquare className="h-5 w-5 text-primary" />{title}
-          </CardTitle>
-          <p className="text-sm text-muted-foreground">{subtitle}</p>
-        </CardHeader>
-        <CardContent>
-          {/* Overall progress */}
-          <div className="mb-6 p-4 rounded-lg bg-secondary/30 border border-border/50">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium">Overall Progress</span>
-              <span className="text-sm font-bold text-primary">{pctAll}% ({doneAll}/{totalAll})</span>
-            </div>
-            <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden">
-              <div className="h-full bg-primary transition-all duration-500 rounded-full" style={{ width: `${pctAll}%` }} />
-            </div>
+      <div className="space-y-4">
+        {/* Overall progress */}
+        <div className="p-4 rounded-lg bg-secondary/30 border border-border/50">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium">Overall Progress</span>
+            <span className="text-sm font-bold text-primary">{pctAll}% ({doneAll}/{totalAll})</span>
           </div>
+          <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden">
+            <div className="h-full bg-primary transition-all duration-500 rounded-full" style={{ width: `${pctAll}%` }} />
+          </div>
+        </div>
 
-          <Accordion type="multiple" className="space-y-2">
-            {data.map((section) => {
-              const done = section.items.filter(i => prog[`${section.category}::${i}`]).length;
-              const pct  = Math.round((done / section.items.length) * 100);
-              return (
-                <AccordionItem key={section.category} value={section.category} className="border border-border/50 rounded-lg px-4 bg-secondary/20">
-                  <AccordionTrigger className="hover:no-underline">
-                    <div className="flex items-center justify-between w-full pr-4">
-                      <div className="flex items-center gap-2">
-                        <span className="text-base">{section.icon}</span>
-                        <span className="font-medium text-left">{section.category}</span>
-                        {done === section.items.length && section.items.length > 0 && (
-                          <Badge variant="outline" className="text-xs bg-green-500/10 text-green-500 border-green-500/30">Complete</Badge>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <div className="w-24 h-2 bg-secondary rounded-full overflow-hidden">
-                          <div className="h-full bg-primary transition-all duration-300" style={{ width: `${pct}%` }} />
-                        </div>
-                        <span className="text-sm text-muted-foreground w-12 text-right">{done}/{section.items.length}</span>
-                      </div>
+        <Accordion type="multiple" className="space-y-2">
+          {data.map((section) => {
+            const done = section.items.filter(i => prog[`${section.category}::${i}`]).length;
+            const pct  = Math.round((done / section.items.length) * 100);
+            return (
+              <AccordionItem key={section.category} value={section.category} className="border border-border/50 rounded-lg px-4 bg-secondary/20">
+                <AccordionTrigger className="hover:no-underline">
+                  <div className="flex items-center justify-between w-full pr-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">{section.icon}</span>
+                      <span className="font-medium text-left">{section.category}</span>
+                      {done === section.items.length && section.items.length > 0 && (
+                        <Badge variant="outline" className="text-xs bg-green-500/10 text-green-500 border-green-500/30">Complete</Badge>
+                      )}
                     </div>
-                  </AccordionTrigger>
-                  <AccordionContent>
-                    <div className="space-y-1 pt-2 pb-1">
-                      {section.items.map((item) => {
-                        const key       = `${section.category}::${item}`;
-                        const isChecked = prog[key] || false;
-                        const isSaving  = clSaving[`${type}::${key}`] || false;
-                        return (
-                          <label key={item} className="flex items-start gap-3 p-2 rounded-lg hover:bg-secondary/50 cursor-pointer transition-colors">
-                            <div className="mt-0.5 shrink-0">
-                              {isSaving
-                                ? <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                                : <Checkbox checked={isChecked} onCheckedChange={() => toggleItem(type, section.category, item)} />
-                              }
-                            </div>
-                            <span className={`text-sm leading-relaxed ${isChecked ? 'text-muted-foreground line-through' : 'text-foreground'}`}>
-                              {item}
-                            </span>
-                          </label>
-                        );
-                      })}
+                    <div className="flex items-center gap-3">
+                      <div className="w-24 h-2 bg-secondary rounded-full overflow-hidden">
+                        <div className="h-full bg-primary transition-all duration-300" style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className="text-sm text-muted-foreground w-12 text-right">{done}/{section.items.length}</span>
                     </div>
-                  </AccordionContent>
-                </AccordionItem>
-              );
-            })}
-          </Accordion>
-        </CardContent>
-      </Card>
+                  </div>
+                </AccordionTrigger>
+                <AccordionContent>
+                  <div className="space-y-1 pt-2 pb-1">
+                    {section.items.map((item) => {
+                      const key       = `${section.category}::${item}`;
+                      const isChecked = prog[key] || false;
+                      const isSaving  = clSaving[`${type}::${key}`] || false;
+                      return (
+                        <label key={item} className="flex items-start gap-3 p-2 rounded-lg hover:bg-secondary/50 cursor-pointer transition-colors">
+                          <div className="mt-0.5 shrink-0">
+                            {isSaving
+                              ? <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                              : <Checkbox checked={isChecked} onCheckedChange={() => toggleItem(type, section.category, item)} />
+                            }
+                          </div>
+                          <span className={`text-sm leading-relaxed ${isChecked ? 'text-muted-foreground line-through' : 'text-foreground'}`}>
+                            {item}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            );
+          })}
+        </Accordion>
+      </div>
     );
+  };
+
+  // ─── Checklist tab labels ──────────────────────────────────────────────────
+
+  const checklistTabs: { type: CLType; label: string; icon: React.ReactNode; data: any[] }[] = [
+    { type: 'web',   label: 'Web',    icon: <Globe className="h-3.5 w-3.5" />,  data: webChecklist   },
+    { type: 'api',   label: 'API',    icon: <Plug className="h-3.5 w-3.5" />,   data: apiChecklist   },
+    { type: 'cloud', label: 'Cloud',  icon: <Cloud className="h-3.5 w-3.5" />,  data: cloudChecklist },
+    { type: 'aiLlm', label: 'AI/LLM', icon: <Brain className="h-3.5 w-3.5" />, data: aiLlmChecklist },
+  ];
+
+  const checklistTitles: Record<CLType, { title: string; subtitle: string }> = {
+    web:   { title: 'Web Application Security Checklist',  subtitle: 'Comprehensive web app testing checklist. Progress is saved per project.' },
+    api:   { title: 'API Security Checklist',              subtitle: 'REST & GraphQL API security testing checklist. Progress is saved per project.' },
+    cloud: { title: 'Cloud Security Checklist',            subtitle: 'AWS, Azure & GCP security misconfiguration checklist. Progress is saved per project.' },
+    aiLlm: { title: 'AI/LLM Security Checklist',          subtitle: 'LLM-specific vulnerabilities: prompt injection, excessive agency, data exposure and more.' },
   };
 
   // ─── Render guards ─────────────────────────────────────────────────────────
@@ -646,21 +655,15 @@ export default function ProjectDetail() {
           <span className="text-muted-foreground text-sm">{formatDate(project.start_date)} – {formatDate(project.end_date)}</span>
         </div>
 
+        {/* ── Main Tabs: only 6 top-level tabs ── */}
         <Tabs defaultValue="overview" className="space-y-6">
           <TabsList className="bg-secondary/50 flex-wrap h-auto gap-1">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="findings">Findings ({findings.length})</TabsTrigger>
             <TabsTrigger value="team">Team ({assignees.length > 0 ? assignees.length : (project?.assignees_count ?? 0)})</TabsTrigger>
             {(role === 'admin' || role === 'manager') && <TabsTrigger value="reports">Reports</TabsTrigger>}
-            {/* Security Testing Checklist tabs */}
-            <TabsTrigger value="cl-web"   className="flex items-center gap-1"><Globe className="h-3.5 w-3.5" />Web</TabsTrigger>
-            <TabsTrigger value="cl-api"   className="flex items-center gap-1"><Plug className="h-3.5 w-3.5" />API</TabsTrigger>
-            <TabsTrigger value="cl-cloud" className="flex items-center gap-1"><Cloud className="h-3.5 w-3.5" />Cloud</TabsTrigger>
-            <TabsTrigger value="cl-llm"   className="flex items-center gap-1"><Brain className="h-3.5 w-3.5" />AI/LLM</TabsTrigger>
-            {/* Other tabs */}
-            <TabsTrigger value="architecture" className="flex items-center gap-1"><Network className="h-3.5 w-3.5" />Architecture</TabsTrigger>
-            <TabsTrigger value="sast" className="flex items-center gap-1"><Shield className="h-3.5 w-3.5" />SAST</TabsTrigger>
-            <TabsTrigger value="asm"  className="flex items-center gap-1"><Cpu className="h-3.5 w-3.5" />ASM</TabsTrigger>
+            <TabsTrigger value="checklist"><CheckSquare className="h-3.5 w-3.5 mr-1" />Checklist</TabsTrigger>
+            <TabsTrigger value="architecture"><Network className="h-3.5 w-3.5 mr-1" />Architecture</TabsTrigger>
           </TabsList>
 
           {/* ── Overview ── */}
@@ -898,51 +901,155 @@ export default function ProjectDetail() {
             )}
           </TabsContent>
 
-          {/* ── Reports ── */}
+          {/* ── Reports ── (admin/manager only) ── */}
           {(role === 'admin' || role === 'manager') && (
             <TabsContent value="reports" className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Pentest Reports */}
+              <div>
+                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Pentest Reports</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Card glow>
+                    <CardHeader><CardTitle className="text-lg flex items-center gap-2"><FileText className="h-5 w-5 text-primary" />Technical Report</CardTitle><CardDescription>Detailed technical findings with steps to reproduce</CardDescription></CardHeader>
+                    <CardContent><Button variant="outline" className="w-full" onClick={handleGenerateTechnicalReport}><Download className="h-4 w-4 mr-2" />Generate Technical Report</Button></CardContent>
+                  </Card>
+                  <Card glow>
+                    <CardHeader><CardTitle className="text-lg flex items-center gap-2"><FileText className="h-5 w-5 text-primary" />Management Report</CardTitle><CardDescription>Executive summary for non-technical stakeholders</CardDescription></CardHeader>
+                    <CardContent><Button variant="outline" className="w-full" onClick={handleGenerateManagementReport}><Download className="h-4 w-4 mr-2" />Generate Management Report</Button></CardContent>
+                  </Card>
+                </div>
+              </div>
+
+              {/* Retest Report */}
+              <div>
+                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Remediation</h3>
                 <Card glow>
-                  <CardHeader><CardTitle className="text-lg flex items-center gap-2"><FileText className="h-5 w-5 text-primary" />Technical Report</CardTitle><CardDescription>Detailed technical findings with steps to reproduce</CardDescription></CardHeader>
-                  <CardContent><Button variant="outline" className="w-full" onClick={handleGenerateTechnicalReport}><Download className="h-4 w-4 mr-2" />Generate Technical Report</Button></CardContent>
-                </Card>
-                <Card glow>
-                  <CardHeader><CardTitle className="text-lg flex items-center gap-2"><FileText className="h-5 w-5 text-primary" />Management Report</CardTitle><CardDescription>Executive summary for non-technical stakeholders</CardDescription></CardHeader>
-                  <CardContent><Button variant="outline" className="w-full" onClick={handleGenerateManagementReport}><Download className="h-4 w-4 mr-2" />Generate Management Report</Button></CardContent>
+                  <CardHeader><CardTitle className="text-lg flex items-center gap-2"><RefreshCw className="h-5 w-5 text-primary" />Retest Report</CardTitle><CardDescription>Summary of remediation progress</CardDescription></CardHeader>
+                  <CardContent>
+                    <div className="flex items-center gap-4 mb-4">
+                      <div className="flex items-center gap-2"><span className="text-sm text-muted-foreground">Fixed:</span><Badge variant="outline" className="bg-green-500/10 text-green-600">{findings.filter(f => f.retest_status === 'Fixed').length}</Badge></div>
+                      <div className="flex items-center gap-2"><span className="text-sm text-muted-foreground">Not Fixed:</span><Badge variant="destructive">{findings.filter(f => f.retest_status === 'Not Fixed').length}</Badge></div>
+                      <div className="flex items-center gap-2"><span className="text-sm text-muted-foreground">Open:</span><Badge variant="secondary">{findings.filter(f => !f.retest_status || f.retest_status === 'Open').length}</Badge></div>
+                    </div>
+                    <Button variant="outline" className="w-full" onClick={handleGenerateRetestReport}><Download className="h-4 w-4 mr-2" />Generate Retest Report</Button>
+                  </CardContent>
                 </Card>
               </div>
-              <Card glow>
-                <CardHeader><CardTitle className="text-lg flex items-center gap-2"><RefreshCw className="h-5 w-5 text-primary" />Retest Report</CardTitle><CardDescription>Summary of remediation progress</CardDescription></CardHeader>
-                <CardContent>
-                  <div className="flex items-center gap-4 mb-4">
-                    <div className="flex items-center gap-2"><span className="text-sm text-muted-foreground">Fixed:</span><Badge variant="outline" className="bg-green-500/10 text-green-600">{findings.filter(f => f.retest_status === 'Fixed').length}</Badge></div>
-                    <div className="flex items-center gap-2"><span className="text-sm text-muted-foreground">Not Fixed:</span><Badge variant="destructive">{findings.filter(f => f.retest_status === 'Not Fixed').length}</Badge></div>
-                    <div className="flex items-center gap-2"><span className="text-sm text-muted-foreground">Open:</span><Badge variant="secondary">{findings.filter(f => !f.retest_status || f.retest_status === 'Open').length}</Badge></div>
-                  </div>
-                  <Button variant="outline" className="w-full" onClick={handleGenerateRetestReport}><Download className="h-4 w-4 mr-2" />Generate Retest Report</Button>
-                </CardContent>
-              </Card>
+
+              {/* SAST Report */}
+              <div>
+                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Code Analysis</h3>
+                <Card glow>
+                  <CardHeader>
+                    <CardTitle className="text-lg flex items-center gap-2"><Shield className="h-5 w-5 text-primary" />SAST Report</CardTitle>
+                    <CardDescription>Static Application Security Testing — code-level vulnerability report</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center gap-3 mb-4 p-3 rounded-lg bg-secondary/30 border border-border/50">
+                      <Shield className="h-8 w-8 text-muted-foreground/50" />
+                      <div>
+                        <p className="text-sm font-medium">No SAST results imported</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">Import scanner output (Semgrep, Bandit, SonarQube, etc.) to generate a SAST report</p>
+                      </div>
+                    </div>
+                    <Button variant="outline" className="w-full" disabled><Upload className="h-4 w-4 mr-2" />Import SAST Results</Button>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* ASM Report */}
+              <div>
+                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Attack Surface</h3>
+                <Card glow>
+                  <CardHeader>
+                    <CardTitle className="text-lg flex items-center gap-2"><Cpu className="h-5 w-5 text-primary" />ASM Report</CardTitle>
+                    <CardDescription>Attack Surface Management — exposed assets, open ports, and service enumeration</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center gap-3 mb-4 p-3 rounded-lg bg-secondary/30 border border-border/50">
+                      <Cpu className="h-8 w-8 text-muted-foreground/50" />
+                      <div>
+                        <p className="text-sm font-medium">No ASM data connected</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">Connect your ASM tool to enumerate exposed assets and auto-generate a surface report</p>
+                      </div>
+                    </div>
+                    <Button variant="outline" className="w-full" disabled><Plus className="h-4 w-4 mr-2" />Connect ASM Tool</Button>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* LLM / AI Report */}
+              <div>
+                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">AI Security</h3>
+                <Card glow>
+                  <CardHeader>
+                    <CardTitle className="text-lg flex items-center gap-2"><Brain className="h-5 w-5 text-primary" />LLM Security Report</CardTitle>
+                    <CardDescription>AI/LLM-specific vulnerability assessment — prompt injection, model abuse, data exfiltration</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center gap-3 mb-4 p-3 rounded-lg bg-secondary/30 border border-border/50">
+                      <Brain className="h-8 w-8 text-muted-foreground/50" />
+                      <div>
+                        <p className="text-sm font-medium">No LLM assessment data</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">Complete the AI/LLM checklist and add LLM-specific findings to generate this report</p>
+                      </div>
+                    </div>
+                    <Button variant="outline" className="w-full" disabled><Download className="h-4 w-4 mr-2" />Generate LLM Report</Button>
+                  </CardContent>
+                </Card>
+              </div>
             </TabsContent>
           )}
 
-          {/* ── Web Checklist ── */}
-          <TabsContent value="cl-web" className="space-y-6">
-            {renderChecklist('web', webChecklist, 'Web Application Security Checklist', 'Comprehensive web app testing checklist. Progress is saved per project.')}
-          </TabsContent>
+          {/* ── Checklist (with inner sub-tabs) ── */}
+          <TabsContent value="checklist" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <CheckSquare className="h-5 w-5 text-primary" />
+                  {checklistTitles[activeChecklistTab].title}
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">{checklistTitles[activeChecklistTab].subtitle}</p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Inner sub-tab switcher */}
+                <div className="flex gap-1 p-1 bg-secondary/40 rounded-lg w-fit flex-wrap">
+                  {checklistTabs.map(({ type, label, icon }) => {
+                    const prog  = clProgress[type] || {};
+                    const data  = checklistTabs.find(t => t.type === type)!.data;
+                    const total = data.reduce((s: number, sec: any) => s + sec.items.length, 0);
+                    const done  = data.reduce((s: number, sec: any) => s + sec.items.filter((i: string) => prog[`${sec.category}::${i}`]).length, 0);
+                    const pct   = total > 0 ? Math.round((done / total) * 100) : 0;
+                    const isActive = activeChecklistTab === type;
+                    return (
+                      <button
+                        key={type}
+                        onClick={() => setActiveChecklistTab(type)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                          isActive
+                            ? 'bg-background text-foreground shadow-sm'
+                            : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        {icon}
+                        {label}
+                        {pct > 0 && (
+                          <span className={`ml-1 text-xs px-1.5 py-0.5 rounded-full ${isActive ? 'bg-primary/10 text-primary' : 'bg-secondary text-muted-foreground'}`}>
+                            {pct}%
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
 
-          {/* ── API Checklist ── */}
-          <TabsContent value="cl-api" className="space-y-6">
-            {renderChecklist('api', apiChecklist, 'API Security Checklist', 'REST & GraphQL API security testing checklist. Progress is saved per project.')}
-          </TabsContent>
-
-          {/* ── Cloud Checklist ── */}
-          <TabsContent value="cl-cloud" className="space-y-6">
-            {renderChecklist('cloud', cloudChecklist, 'Cloud Security Checklist', 'AWS, Azure & GCP security misconfiguration checklist. Progress is saved per project.')}
-          </TabsContent>
-
-          {/* ── AI/LLM Checklist ── */}
-          <TabsContent value="cl-llm" className="space-y-6">
-            {renderChecklist('aiLlm', aiLlmChecklist, 'AI/LLM Security Checklist', 'LLM-specific vulnerabilities: prompt injection, excessive agency, data exposure and more.')}
+                {/* Render the active checklist content */}
+                {checklistTabs.map(({ type, data }) =>
+                  activeChecklistTab === type ? (
+                    <div key={type}>{renderChecklistContent(type, data)}</div>
+                  ) : null
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
 
           {/* ── Architecture ── */}
@@ -954,26 +1061,6 @@ export default function ProjectDetail() {
                 Document and visualize the target application's architecture — network topology, service maps, data flows, and component diagrams.
               </p>
               <Button variant="outline" className="mt-6" disabled><Plus className="h-4 w-4 mr-2" />Add Architecture Diagram</Button>
-            </Card>
-          </TabsContent>
-
-          {/* ── SAST ── */}
-          <TabsContent value="sast" className="space-y-4">
-            <Card className="p-12 text-center">
-              <Shield className="h-16 w-16 mx-auto text-primary/40 mb-4" />
-              <p className="text-lg font-semibold">Static Application Security Testing</p>
-              <p className="text-sm text-muted-foreground mt-2 max-w-md mx-auto">Upload or integrate your SAST scanner output to track code-level vulnerabilities.</p>
-              <Button variant="outline" className="mt-6" disabled><Plus className="h-4 w-4 mr-2" />Import SAST Results</Button>
-            </Card>
-          </TabsContent>
-
-          {/* ── ASM ── */}
-          <TabsContent value="asm" className="space-y-4">
-            <Card className="p-12 text-center">
-              <Cpu className="h-16 w-16 mx-auto text-primary/40 mb-4" />
-              <p className="text-lg font-semibold">Attack Surface Management</p>
-              <p className="text-sm text-muted-foreground mt-2 max-w-md mx-auto">Connect your ASM tool to enumerate exposed assets and services.</p>
-              <Button variant="outline" className="mt-6" disabled><Plus className="h-4 w-4 mr-2" />Connect ASM Tool</Button>
             </Card>
           </TabsContent>
 
