@@ -12,7 +12,7 @@ import {
   ArrowLeft, Globe, Bug, FileText, Download, Plus, Loader2,
   ChevronDown, ChevronUp, RefreshCw, Search,
   CheckSquare, Upload, Image as ImageIcon, X, Shield, Cpu, Brain,
-  AlertTriangle, Trash2, Network, Plug, Cloud,
+  AlertTriangle, Trash2, Network, Plug, Cloud, Users,
 } from 'lucide-react';
 import { generateTechnicalReport, generateManagementReport, generateRetestReport } from '@/utils/reportGenerator';
 import FindingDetailDialog from '@/components/FindingDetailDialog';
@@ -34,9 +34,9 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Severity     = 'Critical' | 'High' | 'Medium' | 'Low' | 'Informational';
+type Severity = 'Critical' | 'High' | 'Medium' | 'Low' | 'Informational';
 type RetestStatus = 'Open' | 'Fixed' | 'Not Fixed';
-type CLType       = 'web' | 'api' | 'cloud' | 'aiLlm';
+type CLType = 'web' | 'api' | 'cloud' | 'aiLlm';
 
 type Project = {
   id: string; name: string; client: string;
@@ -71,8 +71,17 @@ type ChecklistRow = {
   updated_by: string | null; updated_at: string | null;
 };
 
+type ArchComponent = {
+  id: string; name: string;
+  type: 'server' | 'database' | 'api' | 'frontend' | 'mobile' | 'cloud' | 'firewall' | 'loadbalancer' | 'external';
+  ip?: string; port?: string; tech?: string; notes?: string;
+  connections: string[];
+};
+
+type ArchUpload = { name: string; preview: string; notes: string; };
+
 // ─── API base URL ─────────────────────────────────────────────────────────────
-const API_BASE    = import.meta.env.VITE_API_URL ?? 'http://localhost:5000/api';
+const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:5000/api';
 const STATIC_BASE = API_BASE.replace(/\/api$/, '');
 
 // ─── Severity helpers ─────────────────────────────────────────────────────────
@@ -95,11 +104,11 @@ const normalizeSeverity = (s: string | number | null | undefined): Severity => {
 };
 
 const SEV: Record<Severity, { bg: string; text: string; border: string }> = {
-  Critical:      { bg: 'bg-red-500/10',    text: 'text-red-500',    border: 'border-red-500/30'    },
-  High:          { bg: 'bg-orange-500/10', text: 'text-orange-500', border: 'border-orange-500/30' },
-  Medium:        { bg: 'bg-yellow-500/10', text: 'text-yellow-500', border: 'border-yellow-500/30' },
-  Low:           { bg: 'bg-green-500/10',  text: 'text-green-500',  border: 'border-green-500/30'  },
-  Informational: { bg: 'bg-blue-500/10',   text: 'text-blue-500',   border: 'border-blue-500/30'   },
+  Critical: { bg: 'bg-red-500/10', text: 'text-red-500', border: 'border-red-500/30' },
+  High: { bg: 'bg-orange-500/10', text: 'text-orange-500', border: 'border-orange-500/30' },
+  Medium: { bg: 'bg-yellow-500/10', text: 'text-yellow-500', border: 'border-yellow-500/30' },
+  Low: { bg: 'bg-green-500/10', text: 'text-green-500', border: 'border-green-500/30' },
+  Informational: { bg: 'bg-blue-500/10', text: 'text-blue-500', border: 'border-blue-500/30' },
 };
 
 const getSeverityBadge = (s: string | number | null | undefined) => {
@@ -131,35 +140,33 @@ const getRetestBadge = (status: string | null) => {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function ProjectDetail() {
-  const { id }   = useParams();
+  const { id } = useParams();
   const { role, user } = useAuth();
-  const userId   = (user?.id ?? '') as string;
+  const userId = (user?.id ?? '') as string;
 
-  const [project, setProject]     = useState<Project | null>(null);
-  const [findings, setFindings]   = useState<Finding[]>([]);
+  const [project, setProject] = useState<Project | null>(null);
+  const [findings, setFindings] = useState<Finding[]>([]);
   const [assignees, setAssignees] = useState<Assignee[]>([]);
-  const [allUsers, setAllUsers]   = useState<Record<string, string>>({});
+  const [allUsers, setAllUsers] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
 
-  const [expandedFinding, setExpandedFinding]       = useState<string | null>(null);
-  const [pocs, setPocs]                             = useState<Record<string, FindingPoc[]>>({});
-  const [deletingFindingId, setDeletingFindingId]   = useState<string | null>(null);
+  const [expandedFinding, setExpandedFinding] = useState<string | null>(null);
+  const [pocs, setPocs] = useState<Record<string, FindingPoc[]>>({});
+  const [deletingFindingId, setDeletingFindingId] = useState<string | null>(null);
   const [uploadingFindingId, setUploadingFindingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [searchQuery, setSearchQuery]       = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [severityFilter, setSeverityFilter] = useState<string>('all');
   const [addFindingOpen, setAddFindingOpen] = useState(false);
 
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
-  const [isDetailOpen, setIsDetailOpen]       = useState(false);
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
 
-  // Active checklist sub-tab
   const [activeChecklistTab, setActiveChecklistTab] = useState<CLType>('web');
 
-  // Checklist DB state — one map per type
-  const [clProgress, setClProgress]   = useState<Record<string, Record<string, boolean>>>({
+  const [clProgress, setClProgress] = useState<Record<string, Record<string, boolean>>>({
     web: {}, api: {}, cloud: {}, aiLlm: {},
   });
   const [clSaving, setClSaving] = useState<Record<string, boolean>>({});
@@ -172,6 +179,15 @@ export default function ProjectDetail() {
 
   const formPocInputRef = useRef<HTMLInputElement>(null);
   const [pendingPocs, setPendingPocs] = useState<{ file: File; preview: string }[]>([]);
+
+  const [archComponents, setArchComponents] = useState<ArchComponent[]>([]);
+  const [archUploads, setArchUploads] = useState<ArchUpload[]>([]);
+  const [archMode, setArchMode] = useState<'builder' | 'upload'>('builder');
+  const [addingComponent, setAddingComponent] = useState(false);
+  const archFileRef = useRef<HTMLInputElement>(null);
+  const [newComp, setNewComp] = useState<Omit<ArchComponent, 'id' | 'connections'>>({
+    name: '', type: 'server', ip: '', port: '', tech: '', notes: '',
+  });
 
   // ─── Auth headers ──────────────────────────────────────────────────────────
 
@@ -251,7 +267,7 @@ export default function ProjectDetail() {
           ud.forEach((u: any) => { map[String(u.id)] = u.username || u.name || u.email || String(u.id); });
           setAllUsers(map);
         }
-      } catch (_) {}
+      } catch (_) { }
 
       const ar = await fetch(`${API_BASE}/projects/${id}/assignments`, { headers: authHeaders() });
       if (ar.ok) setAssignees(await ar.json());
@@ -289,10 +305,9 @@ export default function ProjectDetail() {
 
   const toggleItem = async (type: CLType, category: string, item: string) => {
     if (!id) return;
-    const key      = `${category}::${item}`;
+    const key = `${category}::${item}`;
     const newValue = !clProgress[type]?.[key];
 
-    // optimistic
     setClProgress(prev => ({ ...prev, [type]: { ...prev[type], [key]: newValue } }));
     setClSaving(prev => ({ ...prev, [`${type}::${key}`]: true }));
 
@@ -362,12 +377,12 @@ export default function ProjectDetail() {
           cwe_id: formData.cweId || null, created_by: userId,
         }),
       });
-      if (!res.ok) { let msg = res.statusText; try { const e = await res.clone().json(); msg = e.message ?? msg; } catch (_) {} toast.error(`Failed to add finding: ${msg}`); return; }
+      if (!res.ok) { let msg = res.statusText; try { const e = await res.clone().json(); msg = e.message ?? msg; } catch (_) { } toast.error(`Failed to add finding: ${msg}`); return; }
       const nf: Finding = await res.json();
       const up: FindingPoc[] = [];
       for (const { file } of pendingPocs) {
         const p = new FormData(); p.append('file', file); p.append('uploaded_by', userId);
-        try { const r = await fetch(`${API_BASE}/findings/${nf.id}/pocs`, { method: 'POST', headers: authHeadersNoContent(), body: p }); if (r.ok) up.push(await r.json()); } catch (_) {}
+        try { const r = await fetch(`${API_BASE}/findings/${nf.id}/pocs`, { method: 'POST', headers: authHeadersNoContent(), body: p }); if (r.ok) up.push(await r.json()); } catch (_) { }
       }
       setFindings(prev => [nf, ...prev]);
       setPocs(prev => ({ ...prev, [nf.id]: up }));
@@ -472,7 +487,7 @@ export default function ProjectDetail() {
       try {
         const r = await fetch(`${API_BASE}/findings/pocs?finding_ids=${findings.map(f => f.id).join(',')}`, { headers: authHeaders() });
         if (r.ok) { const d: any[] = await r.json(); d.forEach(p => { if (!pocImages[p.finding_id]) pocImages[p.finding_id] = []; pocImages[p.finding_id].push(p.file_path); }); }
-      } catch {}
+      } catch { }
       toast.info('Generating report…');
       await generateTechnicalReport(buildReportProject(project), buildReportFindings(findings, project.id).map(f => ({ ...f, evidence: pocImages[f.id] || [] })), pocImages);
       toast.success('Technical Report generated!');
@@ -510,14 +525,13 @@ export default function ProjectDetail() {
     type: CLType,
     data: { category: string; icon: string; items: string[] }[],
   ) => {
-    const prog     = clProgress[type] || {};
+    const prog = clProgress[type] || {};
     const totalAll = data.reduce((s, sec) => s + sec.items.length, 0);
-    const doneAll  = data.reduce((s, sec) => s + sec.items.filter(i => prog[`${sec.category}::${i}`]).length, 0);
-    const pctAll   = totalAll > 0 ? Math.round((doneAll / totalAll) * 100) : 0;
+    const doneAll = data.reduce((s, sec) => s + sec.items.filter(i => prog[`${sec.category}::${i}`]).length, 0);
+    const pctAll = totalAll > 0 ? Math.round((doneAll / totalAll) * 100) : 0;
 
     return (
       <div className="space-y-4">
-        {/* Overall progress */}
         <div className="p-4 rounded-lg bg-secondary/30 border border-border/50">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium">Overall Progress</span>
@@ -531,7 +545,7 @@ export default function ProjectDetail() {
         <Accordion type="multiple" className="space-y-2">
           {data.map((section) => {
             const done = section.items.filter(i => prog[`${section.category}::${i}`]).length;
-            const pct  = Math.round((done / section.items.length) * 100);
+            const pct = Math.round((done / section.items.length) * 100);
             return (
               <AccordionItem key={section.category} value={section.category} className="border border-border/50 rounded-lg px-4 bg-secondary/20">
                 <AccordionTrigger className="hover:no-underline">
@@ -554,9 +568,9 @@ export default function ProjectDetail() {
                 <AccordionContent>
                   <div className="space-y-1 pt-2 pb-1">
                     {section.items.map((item) => {
-                      const key       = `${section.category}::${item}`;
+                      const key = `${section.category}::${item}`;
                       const isChecked = prog[key] || false;
-                      const isSaving  = clSaving[`${type}::${key}`] || false;
+                      const isSaving = clSaving[`${type}::${key}`] || false;
                       return (
                         <label key={item} className="flex items-start gap-3 p-2 rounded-lg hover:bg-secondary/50 cursor-pointer transition-colors">
                           <div className="mt-0.5 shrink-0">
@@ -584,17 +598,17 @@ export default function ProjectDetail() {
   // ─── Checklist tab labels ──────────────────────────────────────────────────
 
   const checklistTabs: { type: CLType; label: string; icon: React.ReactNode; data: any[] }[] = [
-    { type: 'web',   label: 'Web',    icon: <Globe className="h-3.5 w-3.5" />,  data: webChecklist   },
-    { type: 'api',   label: 'API',    icon: <Plug className="h-3.5 w-3.5" />,   data: apiChecklist   },
-    { type: 'cloud', label: 'Cloud',  icon: <Cloud className="h-3.5 w-3.5" />,  data: cloudChecklist },
+    { type: 'web', label: 'Web', icon: <Globe className="h-3.5 w-3.5" />, data: webChecklist },
+    { type: 'api', label: 'API', icon: <Plug className="h-3.5 w-3.5" />, data: apiChecklist },
+    { type: 'cloud', label: 'Cloud', icon: <Cloud className="h-3.5 w-3.5" />, data: cloudChecklist },
     { type: 'aiLlm', label: 'AI/LLM', icon: <Brain className="h-3.5 w-3.5" />, data: aiLlmChecklist },
   ];
 
   const checklistTitles: Record<CLType, { title: string; subtitle: string }> = {
-    web:   { title: 'Web Application Security Checklist',  subtitle: 'Comprehensive web app testing checklist. Progress is saved per project.' },
-    api:   { title: 'API Security Checklist',              subtitle: 'REST & GraphQL API security testing checklist. Progress is saved per project.' },
-    cloud: { title: 'Cloud Security Checklist',            subtitle: 'AWS, Azure & GCP security misconfiguration checklist. Progress is saved per project.' },
-    aiLlm: { title: 'AI/LLM Security Checklist',          subtitle: 'LLM-specific vulnerabilities: prompt injection, excessive agency, data exposure and more.' },
+    web: { title: 'Web Application Security Checklist', subtitle: 'Comprehensive web app testing checklist. Progress is saved per project.' },
+    api: { title: 'API Security Checklist', subtitle: 'REST & GraphQL API security testing checklist. Progress is saved per project.' },
+    cloud: { title: 'Cloud Security Checklist', subtitle: 'AWS, Azure & GCP security misconfiguration checklist. Progress is saved per project.' },
+    aiLlm: { title: 'AI/LLM Security Checklist', subtitle: 'LLM-specific vulnerabilities: prompt injection, excessive agency, data exposure and more.' },
   };
 
   // ─── Render guards ─────────────────────────────────────────────────────────
@@ -655,7 +669,6 @@ export default function ProjectDetail() {
           <span className="text-muted-foreground text-sm">{formatDate(project.start_date)} – {formatDate(project.end_date)}</span>
         </div>
 
-        {/* ── Main Tabs: only 6 top-level tabs ── */}
         <Tabs defaultValue="overview" className="space-y-6">
           <TabsList className="bg-secondary/50 flex-wrap h-auto gap-1">
             <TabsTrigger value="overview">Overview</TabsTrigger>
@@ -666,214 +679,702 @@ export default function ProjectDetail() {
             <TabsTrigger value="architecture"><Network className="h-3.5 w-3.5 mr-1" />Architecture</TabsTrigger>
           </TabsList>
 
-          {/* ── Overview ── */}
+          {/* ── OVERVIEW ── */}
           <TabsContent value="overview" className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+            {/* Row 1: Project Brief + Risk Posture */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+              {/* Project Brief */}
+              <Card className="lg:col-span-2">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <FileText className="h-5 w-5 text-primary" />
+                    Project Brief
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Client</p>
+                      <p className="font-semibold">{project.client || '—'}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Project Name</p>
+                      <p className="font-semibold">{project.name}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Start Date</p>
+                      <p className="font-medium text-sm">{formatDate(project.start_date)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">End Date</p>
+                      <p className="font-medium text-sm">{formatDate(project.end_date)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Status</p>
+                      <Badge variant={project.status as any} className="capitalize">
+                        {project.status || 'pending'}
+                      </Badge>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Project ID</p>
+                      <p className="font-mono text-xs text-muted-foreground truncate">{project.id}</p>
+                    </div>
+                  </div>
+
+                  {/* Timeline bar */}
+                  {project.start_date && project.end_date && (() => {
+                    const start = new Date(project.start_date).getTime();
+                    const end = new Date(project.end_date).getTime();
+                    const now = Date.now();
+                    const total = end - start;
+                    const elapsed = Math.min(Math.max(now - start, 0), total);
+                    const pct = total > 0 ? Math.round((elapsed / total) * 100) : 0;
+                    const daysLeft = Math.max(0, Math.ceil((end - now) / 86400000));
+                    const isOver = now > end;
+                    return (
+                      <div className="pt-2">
+                        <div className="flex justify-between items-center mb-1.5">
+                          <span className="text-xs text-muted-foreground">Timeline Progress</span>
+                          <span className={`text-xs font-medium ${isOver ? 'text-destructive' : 'text-primary'}`}>
+                            {isOver ? 'Overdue' : `${daysLeft} day${daysLeft !== 1 ? 's' : ''} remaining`}
+                          </span>
+                        </div>
+                        <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-700 ${isOver ? 'bg-destructive' : 'bg-primary'}`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                        <div className="flex justify-between mt-1">
+                          <span className="text-xs text-muted-foreground">{new Date(project.start_date).toLocaleDateString()}</span>
+                          <span className="text-xs text-muted-foreground">{new Date(project.end_date).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </CardContent>
+              </Card>
+
+              {/* Risk Posture */}
               <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg flex items-center gap-2"><Globe className="h-5 w-5 text-primary" />Target Information</CardTitle>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <AlertTriangle className="h-5 w-5 text-primary" />
+                    Risk Posture
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {(['Critical', 'High', 'Medium', 'Low', 'Informational'] as Severity[]).map(sev => {
+                    const count = findings.filter(f => normalizeSeverity(f.severity) === sev).length;
+                    const total = findings.length || 1;
+                    const pct = Math.round((count / total) * 100);
+                    const { text } = SEV[sev];
+                    const barColors: Record<Severity, string> = {
+                      Critical: 'bg-red-500', High: 'bg-orange-500',
+                      Medium: 'bg-yellow-500', Low: 'bg-green-500', Informational: 'bg-blue-500',
+                    };
+                    return (
+                      <div key={sev}>
+                        <div className="flex justify-between items-center mb-1">
+                          <span className={`text-xs font-semibold ${text}`}>{sev}</span>
+                          <span className="text-xs text-muted-foreground">{count} ({pct}%)</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-700 ${barColors[sev]}`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div className="pt-2 border-t border-border/50">
+                    <div className="flex justify-between">
+                      <span className="text-xs text-muted-foreground">Total Findings</span>
+                      <span className="text-xs font-bold">{findings.length}</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Row 2: Scope & Target + Remediation Tracker */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+              {/* Scope & Target */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Globe className="h-5 w-5 text-primary" />
+                    Scope & Target
+                  </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div>
-                    <p className="text-sm text-muted-foreground">Domain</p>
-                    <p className="font-mono text-sm mt-1">{project.domain || 'Not specified'}</p>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Primary Domain</p>
+                    {project.domain ? (
+                      <div className="flex items-center gap-2 p-2 rounded-lg bg-secondary/40 border border-border/50">
+                        <Globe className="h-4 w-4 text-primary shrink-0" />
+                        <span className="font-mono text-sm">{project.domain}</span>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground italic">No domain specified</p>
+                    )}
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">IP Addresses</p>
-                    <div className="flex flex-wrap gap-2 mt-1">
-                      {project.ip_addresses?.length
-                        ? project.ip_addresses.map((ip, i) => <Badge key={i} variant="secondary" className="font-mono">{ip}</Badge>)
-                        : <span className="text-muted-foreground text-sm">No IPs specified</span>
-                      }
+                    <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
+                      IP Addresses / Ranges ({project.ip_addresses?.length || 0})
+                    </p>
+                    {project.ip_addresses?.length ? (
+                      <div className="flex flex-wrap gap-2">
+                        {project.ip_addresses.map((ip, i) => (
+                          <Badge key={i} variant="secondary" className="font-mono text-xs">{ip}</Badge>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground italic">No IPs specified</p>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Assessment Coverage</p>
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        { label: 'Web App', active: true, icon: '🌐' },
+                        { label: 'API', active: true, icon: '🔌' },
+                        { label: 'Network', active: false, icon: '🔗' },
+                        { label: 'Mobile', active: false, icon: '📱' },
+                        { label: 'Cloud', active: false, icon: '☁️' },
+                        { label: 'AI/LLM', active: false, icon: '🤖' },
+                      ].map(({ label, active, icon }) => (
+                        <span
+                          key={label}
+                          className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${active
+                              ? 'bg-primary/10 text-primary border-primary/30'
+                              : 'bg-secondary/40 text-muted-foreground border-border/40'
+                            }`}
+                        >
+                          {icon} {label}
+                        </span>
+                      ))}
                     </div>
                   </div>
                 </CardContent>
               </Card>
 
+              {/* Remediation Tracker */}
               <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg flex items-center gap-2"><Bug className="h-5 w-5 text-primary" />Findings Summary</CardTitle>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <RefreshCw className="h-5 w-5 text-primary" />
+                    Remediation Tracker
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {(() => {
+                    const fixed = findings.filter(f => f.retest_status === 'Fixed').length;
+                    const notFixed = findings.filter(f => f.retest_status === 'Not Fixed').length;
+                    const open = findings.filter(f => !f.retest_status || f.retest_status === 'Open').length;
+                    const total = findings.length || 1;
+                    const fixedPct = Math.round((fixed / total) * 100);
+                    const critHighOpen = findings.filter(f =>
+                      (normalizeSeverity(f.severity) === 'Critical' || normalizeSeverity(f.severity) === 'High') &&
+                      f.retest_status !== 'Fixed'
+                    ).length;
+                    return (
+                      <>
+                        <div className="grid grid-cols-3 gap-3 text-center">
+                          <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20">
+                            <p className="text-2xl font-bold text-green-500">{fixed}</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">Fixed</p>
+                          </div>
+                          <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+                            <p className="text-2xl font-bold text-red-500">{notFixed}</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">Not Fixed</p>
+                          </div>
+                          <div className="p-3 rounded-lg bg-secondary/40 border border-border/40">
+                            <p className="text-2xl font-bold text-muted-foreground">{open}</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">Pending</p>
+                          </div>
+                        </div>
+                        <div>
+                          <div className="flex justify-between mb-1.5">
+                            <span className="text-xs text-muted-foreground">Fix Rate</span>
+                            <span className="text-xs font-bold text-green-500">{fixedPct}%</span>
+                          </div>
+                          <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden">
+                            <div className="h-full bg-green-500 rounded-full transition-all duration-700" style={{ width: `${fixedPct}%` }} />
+                          </div>
+                        </div>
+                        {critHighOpen > 0 ? (
+                          <div className="flex items-start gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/20">
+                            <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+                            <p className="text-xs text-destructive">
+                              <span className="font-semibold">{critHighOpen} Critical/High</span> finding{critHighOpen !== 1 ? 's' : ''} still unresolved
+                            </p>
+                          </div>
+                        ) : findings.length > 0 ? (
+                          <div className="flex items-center gap-2 p-3 rounded-lg bg-green-500/10 border border-green-500/20">
+                            <CheckSquare className="h-4 w-4 text-green-500" />
+                            <p className="text-xs text-green-500 font-medium">All Critical/High findings resolved ✓</p>
+                          </div>
+                        ) : null}
+                      </>
+                    );
+                  })()}
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Row 3: Team Snapshot + Recent Findings */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+              {/* Team Snapshot */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Users className="h-5 w-5 text-primary" />
+                    Team Snapshot
+                  </CardTitle>
+                  <CardDescription>{assignees.length} member{assignees.length !== 1 ? 's' : ''} assigned to this project</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-2 gap-4">
-                    {[
-                      { label: 'Critical', count: project.critical_count ?? findings.filter(f => normalizeSeverity(f.severity) === 'Critical').length, color: 'text-red-500',    bg: 'bg-red-500/10'    },
-                      { label: 'High',     count: project.high_count     ?? findings.filter(f => normalizeSeverity(f.severity) === 'High').length,     color: 'text-orange-500', bg: 'bg-orange-500/10' },
-                      { label: 'Medium',   count: project.medium_count   ?? findings.filter(f => normalizeSeverity(f.severity) === 'Medium').length,   color: 'text-yellow-500', bg: 'bg-yellow-500/10' },
-                      { label: 'Low',      count: project.low_count      ?? findings.filter(f => normalizeSeverity(f.severity) === 'Low').length,      color: 'text-green-500',  bg: 'bg-green-500/10'  },
-                    ].map(({ label, count, color, bg }) => (
-                      <div key={label} className={`text-center p-3 rounded-lg ${bg}`}>
-                        <p className={`text-2xl font-bold ${color}`}>{count}</p>
-                        <p className="text-sm text-muted-foreground">{label}</p>
-                      </div>
-                    ))}
-                  </div>
+                  {assignees.length === 0 ? (
+                    <p className="text-sm text-muted-foreground italic">No testers assigned yet</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {assignees.slice(0, 5).map(member => {
+                        const name = allUsers[String(member.user_id)] || member.username || 'Unknown';
+                        const initials = name.charAt(0).toUpperCase();
+                        const findingsByMember = findings.filter(f => String(f.created_by) === String(member.user_id)).length;
+                        return (
+                          <div key={member.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-secondary/40 transition-colors">
+                            <div className="h-8 w-8 rounded-full gradient-technieum flex items-center justify-center text-primary-foreground text-sm font-semibold shrink-0">
+                              {initials}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">{name}</p>
+                              <p className="text-xs text-muted-foreground">Tester · {findingsByMember} finding{findingsByMember !== 1 ? 's' : ''} reported</p>
+                            </div>
+                            <Badge variant="secondary" className="text-xs shrink-0">Active</Badge>
+                          </div>
+                        );
+                      })}
+                      {assignees.length > 5 && (
+                        <p className="text-xs text-muted-foreground text-center pt-1">+{assignees.length - 5} more — see Team tab</p>
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Recent Findings */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Bug className="h-5 w-5 text-primary" />
+                    Recent Findings
+                  </CardTitle>
+                  <CardDescription>Last 5 findings added to this project</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {findings.length === 0 ? (
+                    <p className="text-sm text-muted-foreground italic">No findings yet — start the assessment</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {[...findings]
+                        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                        .slice(0, 5)
+                        .map(f => (
+                          <div key={f.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-secondary/40 transition-colors">
+                            <div className="shrink-0">{getSeverityIcon(f.severity)}</div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">{f.title}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {new Date(f.created_at).toLocaleDateString()} · by {getUsername(f.created_by)}
+                              </p>
+                            </div>
+                            {getSeverityBadge(f.severity)}
+                          </div>
+                        ))
+                      }
+                      {findings.length > 5 && (
+                        <p className="text-xs text-muted-foreground text-center pt-1">
+                          +{findings.length - 5} more — see Findings tab
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
+
+            {/* Row 4: Quick Stats */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {[
+                { label: 'Total Findings', value: findings.length, icon: <Bug className="h-5 w-5" />, color: 'text-primary', bg: 'bg-primary/10', border: 'border-primary/20' },
+                { label: 'Team Size', value: assignees.length, icon: <Users className="h-5 w-5" />, color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/20' },
+                { label: 'POCs Uploaded', value: Object.values(pocs).reduce((s, a) => s + a.length, 0), icon: <ImageIcon className="h-5 w-5" />, color: 'text-purple-400', bg: 'bg-purple-500/10', border: 'border-purple-500/20' },
+                { label: 'Findings Fixed', value: findings.filter(f => f.retest_status === 'Fixed').length, icon: <CheckSquare className="h-5 w-5" />, color: 'text-green-400', bg: 'bg-green-500/10', border: 'border-green-500/20' },
+              ].map(({ label, value, icon, color, bg, border }) => (
+                <Card key={label} className={`border ${border} ${bg}`}>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className={`text-3xl font-bold ${color}`}>{value}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
+                      </div>
+                      <div className={`${color} opacity-60`}>{icon}</div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+
           </TabsContent>
 
-          {/* ── Findings ── */}
+          {/* ── FINDINGS ── */}
           <TabsContent value="findings" className="space-y-4">
-            <div className="flex flex-col sm:flex-row gap-4">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input placeholder="Search findings..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-10 bg-secondary/50" />
+
+            {/* ── Inner findings sub-tabs ── */}
+            <Tabs defaultValue="all" className="space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <TabsList className="bg-secondary/50 h-auto gap-1 p-1">
+                  <TabsTrigger value="all" className="flex items-center gap-2 text-sm">
+                    <Bug className="h-3.5 w-3.5" />
+                    Pentest
+                    <span className="ml-1 px-1.5 py-0.5 rounded-full text-xs bg-primary/10 text-primary font-semibold">
+                      {findings.length}
+                    </span>
+                  </TabsTrigger>
+                  <TabsTrigger value="sast" className="flex items-center gap-2 text-sm">
+                    <Shield className="h-3.5 w-3.5" />
+                    SAST
+                    <span className="ml-1 px-1.5 py-0.5 rounded-full text-xs bg-secondary text-muted-foreground font-semibold">0</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="asm" className="flex items-center gap-2 text-sm">
+                    <Cpu className="h-3.5 w-3.5" />
+                    ASM
+                    <span className="ml-1 px-1.5 py-0.5 rounded-full text-xs bg-secondary text-muted-foreground font-semibold">0</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="llm" className="flex items-center gap-2 text-sm">
+                    <Brain className="h-3.5 w-3.5" />
+                    LLM / AI
+                    <span className="ml-1 px-1.5 py-0.5 rounded-full text-xs bg-secondary text-muted-foreground font-semibold">0</span>
+                  </TabsTrigger>
+                </TabsList>
               </div>
-              <Select value={severityFilter} onValueChange={setSeverityFilter}>
-                <SelectTrigger className="w-full sm:w-40 bg-secondary/50"><SelectValue placeholder="Severity" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Severity</SelectItem>
-                  <SelectItem value="Critical">Critical</SelectItem>
-                  <SelectItem value="High">High</SelectItem>
-                  <SelectItem value="Medium">Medium</SelectItem>
-                  <SelectItem value="Low">Low</SelectItem>
-                  <SelectItem value="Informational">Informational</SelectItem>
-                </SelectContent>
-              </Select>
-              <Button variant="default" className="gradient-technieum" onClick={() => setAddFindingOpen(true)}>
-                <Plus className="h-4 w-4 mr-2" />Add Finding
-              </Button>
-            </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-              {(['Critical', 'High', 'Medium', 'Low', 'Informational'] as Severity[]).map(sev => {
-                const count = findings.filter(f => normalizeSeverity(f.severity) === sev).length;
-                const { bg, text, border } = SEV[sev];
-                return (
-                  <Card key={sev} className={`p-4 border ${border} ${bg}`}>
-                    <div className="flex items-center justify-between">
-                      <div><p className={`text-2xl font-bold ${text}`}>{count}</p><p className="text-xs text-muted-foreground">{sev}</p></div>
-                      {getSeverityIcon(sev)}
-                    </div>
-                  </Card>
-                );
-              })}
-            </div>
+              {/* ── ALL / PENTEST FINDINGS (existing) ── */}
+              <TabsContent value="all" className="space-y-4 mt-0">
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input placeholder="Search findings..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-10 bg-secondary/50" />
+                  </div>
+                  <Select value={severityFilter} onValueChange={setSeverityFilter}>
+                    <SelectTrigger className="w-full sm:w-40 bg-secondary/50"><SelectValue placeholder="Severity" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Severity</SelectItem>
+                      <SelectItem value="Critical">Critical</SelectItem>
+                      <SelectItem value="High">High</SelectItem>
+                      <SelectItem value="Medium">Medium</SelectItem>
+                      <SelectItem value="Low">Low</SelectItem>
+                      <SelectItem value="Informational">Informational</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button variant="default" className="gradient-technieum" onClick={() => setAddFindingOpen(true)}>
+                    <Plus className="h-4 w-4 mr-2" />Add Finding
+                  </Button>
+                </div>
 
-            <div className="space-y-3">
-              {filteredFindings.map((finding, index) => {
-                const isExpanded  = expandedFinding === finding.id;
-                const canDelete   = !!userId && finding.created_by === userId;
-                const findingPocs = pocs[finding.id] || [];
-                return (
-                  <Card key={finding.id} className="animate-fade-in overflow-hidden" style={{ animationDelay: `${index * 30}ms` }}>
-                    <div className="p-4 cursor-pointer" onClick={() => setExpandedFinding(isExpanded ? null : finding.id)}>
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-3 flex-wrap">
-                            {getSeverityBadge(finding.severity)}
-                            {finding.cvss_score && <span className="text-sm font-mono text-muted-foreground">CVSS {finding.cvss_score}</span>}
-                            <Badge variant="secondary" className="text-xs hidden sm:inline-flex">{project.name}</Badge>
-                            {findingPocs.length > 0 && (
-                              <Badge variant="outline" className="text-xs"><ImageIcon className="h-3 w-3 mr-1" />{findingPocs.length} POC{findingPocs.length > 1 ? 's' : ''}</Badge>
-                            )}
-                          </div>
-                          <h3 className="font-semibold mt-2">{finding.title}</h3>
-                          <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{finding.description}</p>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                  {(['Critical', 'High', 'Medium', 'Low', 'Informational'] as Severity[]).map(sev => {
+                    const count = findings.filter(f => normalizeSeverity(f.severity) === sev).length;
+                    const { bg, text, border } = SEV[sev];
+                    return (
+                      <Card key={sev} className={`p-4 border ${border} ${bg}`}>
+                        <div className="flex items-center justify-between">
+                          <div><p className={`text-2xl font-bold ${text}`}>{count}</p><p className="text-xs text-muted-foreground">{sev}</p></div>
+                          {getSeverityIcon(sev)}
                         </div>
-                        <div className="flex items-center gap-3 shrink-0">
-                          <Badge variant={finding.status === 'Open' ? 'destructive' : 'secondary'}>{finding.status}</Badge>
-                          {finding.retest_status && getRetestBadge(finding.retest_status)}
-                          {canDelete && (
-                            <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); handleDelete(finding.id); }}>
-                              <Trash2 className="h-4 w-4 text-destructive" />
-                            </Button>
-                          )}
-                          {isExpanded ? <ChevronUp className="h-5 w-5 text-muted-foreground" /> : <ChevronDown className="h-5 w-5 text-muted-foreground" />}
-                        </div>
-                      </div>
-                    </div>
+                      </Card>
+                    );
+                  })}
+                </div>
 
-                    {isExpanded && (
-                      <div className="px-4 pb-4 pt-2 border-t border-border/50 space-y-4 animate-fade-in">
-                        {finding.steps_to_reproduce && <div><h4 className="text-sm font-semibold text-primary mb-2">Steps to Reproduce</h4><pre className="text-sm text-muted-foreground whitespace-pre-wrap font-mono bg-secondary/30 p-3 rounded-lg">{finding.steps_to_reproduce}</pre></div>}
-                        {finding.impact && <div><h4 className="text-sm font-semibold text-primary mb-2">Impact</h4><p className="text-sm text-muted-foreground">{finding.impact}</p></div>}
-                        {finding.remediation && <div><h4 className="text-sm font-semibold text-primary mb-2">Remediation</h4><pre className="text-sm text-muted-foreground whitespace-pre-wrap bg-secondary/30 p-3 rounded-lg">{finding.remediation}</pre></div>}
-                        {finding.affected_component && <div><h4 className="text-sm font-semibold text-primary mb-2">Affected Component</h4><Badge variant="secondary" className="font-mono text-xs">{finding.affected_component}</Badge></div>}
-                        {finding.cwe_id && <div><h4 className="text-sm font-semibold text-primary mb-2">CWE</h4><Badge variant="outline" className="font-mono text-xs">{finding.cwe_id}</Badge></div>}
-
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <h4 className="text-sm font-semibold text-primary">Proof of Concept (POC)</h4>
-                            <div>
-                              <input type="file" ref={fileInputRef} className="hidden" accept=".jpg,.jpeg,.png"
-                                onChange={(e) => handleFileUpload(e, uploadingFindingId || finding.id)} />
-                              <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setUploadingFindingId(finding.id); fileInputRef.current?.click(); }}>
-                                <Upload className="h-4 w-4 mr-1" />Upload POC
-                              </Button>
+                <div className="space-y-3">
+                  {filteredFindings.map((finding, index) => {
+                    const isExpanded = expandedFinding === finding.id;
+                    const canDelete = !!userId && finding.created_by === userId;
+                    const findingPocs = pocs[finding.id] || [];
+                    return (
+                      <Card key={finding.id} className="animate-fade-in overflow-hidden" style={{ animationDelay: `${index * 30}ms` }}>
+                        <div className="p-4 cursor-pointer" onClick={() => setExpandedFinding(isExpanded ? null : finding.id)}>
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-3 flex-wrap">
+                                {getSeverityBadge(finding.severity)}
+                                {finding.cvss_score && <span className="text-sm font-mono text-muted-foreground">CVSS {finding.cvss_score}</span>}
+                                <Badge variant="secondary" className="text-xs hidden sm:inline-flex">{project.name}</Badge>
+                                {findingPocs.length > 0 && (
+                                  <Badge variant="outline" className="text-xs"><ImageIcon className="h-3 w-3 mr-1" />{findingPocs.length} POC{findingPocs.length > 1 ? 's' : ''}</Badge>
+                                )}
+                              </div>
+                              <h3 className="font-semibold mt-2">{finding.title}</h3>
+                              <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{finding.description}</p>
+                            </div>
+                            <div className="flex items-center gap-3 shrink-0">
+                              <Badge variant={finding.status === 'Open' ? 'destructive' : 'secondary'}>{finding.status}</Badge>
+                              {finding.retest_status && getRetestBadge(finding.retest_status)}
+                              {canDelete && (
+                                <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); handleDelete(finding.id); }}>
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
+                              )}
+                              {isExpanded ? <ChevronUp className="h-5 w-5 text-muted-foreground" /> : <ChevronDown className="h-5 w-5 text-muted-foreground" />}
                             </div>
                           </div>
-                          {findingPocs.length > 0 ? (
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                              {findingPocs.map(poc => (
-                                <div key={poc.id} className="relative group">
-                                  <img src={`${STATIC_BASE}${poc.file_path}`} alt={poc.file_name}
-                                    className="rounded-lg border border-border/50 w-full h-32 object-cover cursor-pointer hover:opacity-80"
-                                    onClick={(e) => { e.stopPropagation(); window.open(`${STATIC_BASE}${poc.file_path}`, '_blank'); }} />
-                                  {!!userId && poc.uploaded_by === userId && (
-                                    <button type="button" title="Delete POC"
-                                      className="absolute top-1 right-1 h-5 w-5 rounded-full bg-destructive text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 z-10"
-                                      onClick={(e) => { e.stopPropagation(); handleDeletePoc(poc); }}>
-                                      <X className="h-3 w-3" />
-                                    </button>
-                                  )}
-                                  <p className="text-xs text-muted-foreground mt-1 truncate">{poc.file_name}</p>
+                        </div>
+
+                        {isExpanded && (
+                          <div className="px-4 pb-4 pt-2 border-t border-border/50 space-y-4 animate-fade-in">
+                            {finding.steps_to_reproduce && <div><h4 className="text-sm font-semibold text-primary mb-2">Steps to Reproduce</h4><pre className="text-sm text-muted-foreground whitespace-pre-wrap font-mono bg-secondary/30 p-3 rounded-lg">{finding.steps_to_reproduce}</pre></div>}
+                            {finding.impact && <div><h4 className="text-sm font-semibold text-primary mb-2">Impact</h4><p className="text-sm text-muted-foreground">{finding.impact}</p></div>}
+                            {finding.remediation && <div><h4 className="text-sm font-semibold text-primary mb-2">Remediation</h4><pre className="text-sm text-muted-foreground whitespace-pre-wrap bg-secondary/30 p-3 rounded-lg">{finding.remediation}</pre></div>}
+                            {finding.affected_component && <div><h4 className="text-sm font-semibold text-primary mb-2">Affected Component</h4><Badge variant="secondary" className="font-mono text-xs">{finding.affected_component}</Badge></div>}
+                            {finding.cwe_id && <div><h4 className="text-sm font-semibold text-primary mb-2">CWE</h4><Badge variant="outline" className="font-mono text-xs">{finding.cwe_id}</Badge></div>}
+
+                            <div>
+                              <div className="flex items-center justify-between mb-2">
+                                <h4 className="text-sm font-semibold text-primary">Proof of Concept (POC)</h4>
+                                <div>
+                                  <input type="file" ref={fileInputRef} className="hidden" accept=".jpg,.jpeg,.png"
+                                    onChange={(e) => handleFileUpload(e, uploadingFindingId || finding.id)} />
+                                  <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setUploadingFindingId(finding.id); fileInputRef.current?.click(); }}>
+                                    <Upload className="h-4 w-4 mr-1" />Upload POC
+                                  </Button>
                                 </div>
-                              ))}
+                              </div>
+                              {findingPocs.length > 0 ? (
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                  {findingPocs.map(poc => (
+                                    <div key={poc.id} className="relative group">
+                                      <img src={`${STATIC_BASE}${poc.file_path}`} alt={poc.file_name}
+                                        className="rounded-lg border border-border/50 w-full h-32 object-cover cursor-pointer hover:opacity-80"
+                                        onClick={(e) => { e.stopPropagation(); window.open(`${STATIC_BASE}${poc.file_path}`, '_blank'); }} />
+                                      {!!userId && poc.uploaded_by === userId && (
+                                        <button type="button" title="Delete POC"
+                                          className="absolute top-1 right-1 h-5 w-5 rounded-full bg-destructive text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 z-10"
+                                          onClick={(e) => { e.stopPropagation(); handleDeletePoc(poc); }}>
+                                          <X className="h-3 w-3" />
+                                        </button>
+                                      )}
+                                      <p className="text-xs text-muted-foreground mt-1 truncate">{poc.file_name}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : <p className="text-sm text-muted-foreground">No POC images uploaded yet.</p>}
                             </div>
-                          ) : <p className="text-sm text-muted-foreground">No POC images uploaded yet.</p>}
-                        </div>
 
-                        <div className="pt-2 border-t border-border/50">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <h4 className="text-sm font-semibold text-primary mb-1">Retest Status</h4>
-                              <div className="flex items-center gap-2">
-                                {finding.retest_status ? (
-                                  <>{getRetestBadge(finding.retest_status)}
-                                    {finding.retest_date && <span className="text-xs text-muted-foreground ml-2">Last tested: {new Date(finding.retest_date).toLocaleDateString()}</span>}
-                                    {finding.retested_by && <span className="text-xs text-muted-foreground">by {getUsername(finding.retested_by)}</span>}
-                                  </>
-                                ) : <span className="text-sm text-muted-foreground">Not retested yet</span>}
+                            <div className="pt-2 border-t border-border/50">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <h4 className="text-sm font-semibold text-primary mb-1">Retest Status</h4>
+                                  <div className="flex items-center gap-2">
+                                    {finding.retest_status ? (
+                                      <>{getRetestBadge(finding.retest_status)}
+                                        {finding.retest_date && <span className="text-xs text-muted-foreground ml-2">Last tested: {new Date(finding.retest_date).toLocaleDateString()}</span>}
+                                        {finding.retested_by && <span className="text-xs text-muted-foreground">by {getUsername(finding.retested_by)}</span>}
+                                      </>
+                                    ) : <span className="text-sm text-muted-foreground">Not retested yet</span>}
+                                  </div>
+                                </div>
+                                <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+                                  <Select value={finding.retest_status || ''} onValueChange={(v) => handleUpdateRetestStatus(finding.id, v as RetestStatus)}>
+                                    <SelectTrigger className="w-32 h-8 text-xs"><SelectValue placeholder="Update status" /></SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="Open">Open</SelectItem>
+                                      <SelectItem value="Fixed">Fixed</SelectItem>
+                                      <SelectItem value="Not Fixed">Not Fixed</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
                               </div>
                             </div>
-                            <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
-                              <Select value={finding.retest_status || ''} onValueChange={(v) => handleUpdateRetestStatus(finding.id, v as RetestStatus)}>
-                                <SelectTrigger className="w-32 h-8 text-xs"><SelectValue placeholder="Update status" /></SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="Open">Open</SelectItem>
-                                  <SelectItem value="Fixed">Fixed</SelectItem>
-                                  <SelectItem value="Not Fixed">Not Fixed</SelectItem>
-                                </SelectContent>
-                              </Select>
+
+                            <div className="flex items-center gap-4 text-sm text-muted-foreground pt-2 border-t border-border/50">
+                              <span>Reported by: {getUsername(finding.created_by)}</span>
+                              <span>Created: {new Date(finding.created_at).toLocaleDateString()}</span>
                             </div>
                           </div>
-                        </div>
+                        )}
+                      </Card>
+                    );
+                  })}
+                </div>
 
-                        <div className="flex items-center gap-4 text-sm text-muted-foreground pt-2 border-t border-border/50">
-                          <span>Reported by: {getUsername(finding.created_by)}</span>
-                          <span>Created: {new Date(finding.created_at).toLocaleDateString()}</span>
-                        </div>
-                      </div>
-                    )}
+                {filteredFindings.length === 0 && (
+                  <Card className="p-12 text-center">
+                    <AlertTriangle className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                    <p className="text-lg font-medium">No findings found</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {findings.length === 0 ? 'Start documenting vulnerabilities found during the assessment' : 'Try adjusting your search or filter criteria'}
+                    </p>
                   </Card>
-                );
-              })}
-            </div>
+                )}
+              </TabsContent>
 
-            {filteredFindings.length === 0 && (
-              <Card className="p-12 text-center">
-                <AlertTriangle className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <p className="text-lg font-medium">No findings found</p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {findings.length === 0 ? 'Start documenting vulnerabilities found during the assessment' : 'Try adjusting your search or filter criteria'}
-                </p>
-              </Card>
-            )}
+              {/* ── SAST FINDINGS ── */}
+              <TabsContent value="sast" className="space-y-4 mt-0">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div>
+                    <h3 className="font-semibold flex items-center gap-2">
+                      <Shield className="h-4 w-4 text-primary" />
+                      SAST Findings
+                    </h3>
+                    <p className="text-sm text-muted-foreground mt-0.5">Static Application Security Testing — code-level vulnerabilities</p>
+                  </div>
+                  <Button variant="outline" size="sm" disabled>
+                    <Upload className="h-4 w-4 mr-2" />Import SAST Results
+                  </Button>
+                </div>
+
+                {/* Column headers — Aikido style */}
+                <div className="rounded-lg border border-border/50 overflow-hidden">
+                  <div className="grid grid-cols-12 gap-4 px-4 py-2.5 bg-secondary/40 border-b border-border/50">
+                    <div className="col-span-6 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Title</div>
+                    <div className="col-span-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Severity</div>
+                    <div className="col-span-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">File</div>
+                    <div className="col-span-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider text-right">Date</div>
+                  </div>
+
+                  {/* Empty state */}
+                  <div className="px-4 py-16 text-center">
+                    <Shield className="h-12 w-12 mx-auto text-muted-foreground/30 mb-4" />
+                    <p className="text-sm font-medium text-muted-foreground">No SAST results imported</p>
+                    <p className="text-xs text-muted-foreground/60 mt-1 max-w-sm mx-auto">
+                      Import scanner output from Semgrep, Bandit, SonarQube, or any SARIF-compatible tool to see code-level findings here
+                    </p>
+                    <Button variant="outline" size="sm" className="mt-4" disabled>
+                      <Upload className="h-4 w-4 mr-2" />Import SAST Results
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Supported scanners */}
+                <div className="flex flex-wrap gap-2 items-center">
+                  <span className="text-xs text-muted-foreground">Supported scanners:</span>
+                  {['Semgrep', 'Bandit', 'SonarQube', 'CodeQL', 'Checkmarx', 'Snyk Code'].map(tool => (
+                    <span key={tool} className="text-xs px-2 py-0.5 rounded-full bg-secondary/60 border border-border/40 text-muted-foreground">
+                      {tool}
+                    </span>
+                  ))}
+                </div>
+              </TabsContent>
+
+              {/* ── ASM FINDINGS ── */}
+              <TabsContent value="asm" className="space-y-4 mt-0">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div>
+                    <h3 className="font-semibold flex items-center gap-2">
+                      <Cpu className="h-4 w-4 text-primary" />
+                      ASM Findings
+                    </h3>
+                    <p className="text-sm text-muted-foreground mt-0.5">Attack Surface Management — exposed assets, open ports, services</p>
+                  </div>
+                  <Button variant="outline" size="sm" disabled>
+                    <Plus className="h-4 w-4 mr-2" />Connect ASM Tool
+                  </Button>
+                </div>
+
+                <div className="rounded-lg border border-border/50 overflow-hidden">
+                  <div className="grid grid-cols-12 gap-4 px-4 py-2.5 bg-secondary/40 border-b border-border/50">
+                    <div className="col-span-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Asset / Host</div>
+                    <div className="col-span-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Port / Service</div>
+                    <div className="col-span-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Severity</div>
+                    <div className="col-span-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Type</div>
+                    <div className="col-span-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider text-right">Detected</div>
+                  </div>
+
+                  <div className="px-4 py-16 text-center">
+                    <Cpu className="h-12 w-12 mx-auto text-muted-foreground/30 mb-4" />
+                    <p className="text-sm font-medium text-muted-foreground">No ASM data connected</p>
+                    <p className="text-xs text-muted-foreground/60 mt-1 max-w-sm mx-auto">
+                      Connect your Technieum ASM tool to automatically surface exposed assets, misconfigured services, and open ports for this target
+                    </p>
+                    <Button variant="outline" size="sm" className="mt-4" disabled>
+                      <Plus className="h-4 w-4 mr-2" />Connect ASM Tool
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2 items-center">
+                  <span className="text-xs text-muted-foreground">Data sources:</span>
+                  {['Technieum ASM', 'Shodan', 'Censys', 'Nmap', 'Subfinder', 'Nuclei'].map(tool => (
+                    <span key={tool} className="text-xs px-2 py-0.5 rounded-full bg-secondary/60 border border-border/40 text-muted-foreground">
+                      {tool}
+                    </span>
+                  ))}
+                </div>
+              </TabsContent>
+
+              {/* ── LLM / AI FINDINGS ── */}
+              <TabsContent value="llm" className="space-y-4 mt-0">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div>
+                    <h3 className="font-semibold flex items-center gap-2">
+                      <Brain className="h-4 w-4 text-primary" />
+                      LLM / AI Findings
+                    </h3>
+                    <p className="text-sm text-muted-foreground mt-0.5">AI-specific vulnerabilities — prompt injection, model abuse, data exfiltration</p>
+                  </div>
+                  <Button variant="default" className="gradient-technieum" size="sm" onClick={() => setAddFindingOpen(true)}>
+                    <Plus className="h-4 w-4 mr-2" />Add LLM Finding
+                  </Button>
+                </div>
+
+                <div className="rounded-lg border border-border/50 overflow-hidden">
+                  <div className="grid grid-cols-12 gap-4 px-4 py-2.5 bg-secondary/40 border-b border-border/50">
+                    <div className="col-span-5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Title</div>
+                    <div className="col-span-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Severity</div>
+                    <div className="col-span-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Category</div>
+                    <div className="col-span-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Status</div>
+                    <div className="col-span-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider text-right">Date</div>
+                  </div>
+
+                  <div className="px-4 py-16 text-center">
+                    <Brain className="h-12 w-12 mx-auto text-muted-foreground/30 mb-4" />
+                    <p className="text-sm font-medium text-muted-foreground">No LLM findings yet</p>
+                    <p className="text-xs text-muted-foreground/60 mt-1 max-w-sm mx-auto">
+                      Document AI/LLM-specific vulnerabilities found during the assessment — prompt injection, jailbreaks, data leakage, excessive agency, and more
+                    </p>
+                    <Button variant="default" className="gradient-technieum mt-4" size="sm" onClick={() => setAddFindingOpen(true)}>
+                      <Plus className="h-4 w-4 mr-2" />Add LLM Finding
+                    </Button>
+                  </div>
+                </div>
+
+                {/* LLM vuln category tags */}
+                <div className="flex flex-wrap gap-2 items-center">
+                  <span className="text-xs text-muted-foreground">Common categories:</span>
+                  {[
+                    'Prompt Injection', 'Jailbreak', 'Data Exfiltration',
+                    'Excessive Agency', 'Model Inversion', 'Supply Chain',
+                    'Insecure Output', 'RAG Poisoning',
+                  ].map(cat => (
+                    <span key={cat} className="text-xs px-2 py-0.5 rounded-full bg-primary/5 border border-primary/20 text-primary/70">
+                      {cat}
+                    </span>
+                  ))}
+                </div>
+              </TabsContent>
+
+            </Tabs>
           </TabsContent>
 
-          {/* ── Team ── */}
+          {/* ── TEAM ── */}
           <TabsContent value="team" className="space-y-4">
             {assignees.length === 0 ? (
               <Card className="p-12 text-center"><p className="text-lg font-medium">No team members assigned</p><p className="text-sm text-muted-foreground mt-1">Assign testers from the Projects page</p></Card>
@@ -882,7 +1383,6 @@ export default function ProjectDetail() {
                 <p className="text-muted-foreground">{assignees.length} member{assignees.length !== 1 ? 's' : ''} assigned</p>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {assignees.map((member) => {
-                    // Prefer allUsers lookup (populated from /api/users), fall back to assignment username
                     const resolvedName = allUsers[String(member.user_id)] || member.username || '';
                     const sn = String(resolvedName).replace(/<[^>]*>/g, '').trim() || 'Unknown';
                     return (
@@ -903,10 +1403,9 @@ export default function ProjectDetail() {
             )}
           </TabsContent>
 
-          {/* ── Reports ── (admin/manager only) ── */}
+          {/* ── REPORTS ── */}
           {(role === 'admin' || role === 'manager') && (
             <TabsContent value="reports" className="space-y-4">
-              {/* Pentest Reports */}
               <div>
                 <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Pentest Reports</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -920,8 +1419,6 @@ export default function ProjectDetail() {
                   </Card>
                 </div>
               </div>
-
-              {/* Retest Report */}
               <div>
                 <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Remediation</h3>
                 <Card glow>
@@ -936,64 +1433,40 @@ export default function ProjectDetail() {
                   </CardContent>
                 </Card>
               </div>
-
-              {/* SAST Report */}
               <div>
                 <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Code Analysis</h3>
                 <Card glow>
-                  <CardHeader>
-                    <CardTitle className="text-lg flex items-center gap-2"><Shield className="h-5 w-5 text-primary" />SAST Report</CardTitle>
-                    <CardDescription>Static Application Security Testing — code-level vulnerability report</CardDescription>
-                  </CardHeader>
+                  <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Shield className="h-5 w-5 text-primary" />SAST Report</CardTitle><CardDescription>Static Application Security Testing — code-level vulnerability report</CardDescription></CardHeader>
                   <CardContent>
                     <div className="flex items-center gap-3 mb-4 p-3 rounded-lg bg-secondary/30 border border-border/50">
                       <Shield className="h-8 w-8 text-muted-foreground/50" />
-                      <div>
-                        <p className="text-sm font-medium">No SAST results imported</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">Import scanner output (Semgrep, Bandit, SonarQube, etc.) to generate a SAST report</p>
-                      </div>
+                      <div><p className="text-sm font-medium">No SAST results imported</p><p className="text-xs text-muted-foreground mt-0.5">Import scanner output (Semgrep, Bandit, SonarQube, etc.) to generate a SAST report</p></div>
                     </div>
                     <Button variant="outline" className="w-full" disabled><Upload className="h-4 w-4 mr-2" />Import SAST Results</Button>
                   </CardContent>
                 </Card>
               </div>
-
-              {/* ASM Report */}
               <div>
                 <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Attack Surface</h3>
                 <Card glow>
-                  <CardHeader>
-                    <CardTitle className="text-lg flex items-center gap-2"><Cpu className="h-5 w-5 text-primary" />ASM Report</CardTitle>
-                    <CardDescription>Attack Surface Management — exposed assets, open ports, and service enumeration</CardDescription>
-                  </CardHeader>
+                  <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Cpu className="h-5 w-5 text-primary" />ASM Report</CardTitle><CardDescription>Attack Surface Management — exposed assets, open ports, and service enumeration</CardDescription></CardHeader>
                   <CardContent>
                     <div className="flex items-center gap-3 mb-4 p-3 rounded-lg bg-secondary/30 border border-border/50">
                       <Cpu className="h-8 w-8 text-muted-foreground/50" />
-                      <div>
-                        <p className="text-sm font-medium">No ASM data connected</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">Connect your ASM tool to enumerate exposed assets and auto-generate a surface report</p>
-                      </div>
+                      <div><p className="text-sm font-medium">No ASM data connected</p><p className="text-xs text-muted-foreground mt-0.5">Connect your ASM tool to enumerate exposed assets and auto-generate a surface report</p></div>
                     </div>
                     <Button variant="outline" className="w-full" disabled><Plus className="h-4 w-4 mr-2" />Connect ASM Tool</Button>
                   </CardContent>
                 </Card>
               </div>
-
-              {/* LLM / AI Report */}
               <div>
                 <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">AI Security</h3>
                 <Card glow>
-                  <CardHeader>
-                    <CardTitle className="text-lg flex items-center gap-2"><Brain className="h-5 w-5 text-primary" />LLM Security Report</CardTitle>
-                    <CardDescription>AI/LLM-specific vulnerability assessment — prompt injection, model abuse, data exfiltration</CardDescription>
-                  </CardHeader>
+                  <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Brain className="h-5 w-5 text-primary" />LLM Security Report</CardTitle><CardDescription>AI/LLM-specific vulnerability assessment — prompt injection, model abuse, data exfiltration</CardDescription></CardHeader>
                   <CardContent>
                     <div className="flex items-center gap-3 mb-4 p-3 rounded-lg bg-secondary/30 border border-border/50">
                       <Brain className="h-8 w-8 text-muted-foreground/50" />
-                      <div>
-                        <p className="text-sm font-medium">No LLM assessment data</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">Complete the AI/LLM checklist and add LLM-specific findings to generate this report</p>
-                      </div>
+                      <div><p className="text-sm font-medium">No LLM assessment data</p><p className="text-xs text-muted-foreground mt-0.5">Complete the AI/LLM checklist and add LLM-specific findings to generate this report</p></div>
                     </div>
                     <Button variant="outline" className="w-full" disabled><Download className="h-4 w-4 mr-2" />Generate LLM Report</Button>
                   </CardContent>
@@ -1002,7 +1475,7 @@ export default function ProjectDetail() {
             </TabsContent>
           )}
 
-          {/* ── Checklist (with inner sub-tabs) ── */}
+          {/* ── CHECKLIST ── */}
           <TabsContent value="checklist" className="space-y-4">
             <Card>
               <CardHeader>
@@ -1013,27 +1486,22 @@ export default function ProjectDetail() {
                 <p className="text-sm text-muted-foreground">{checklistTitles[activeChecklistTab].subtitle}</p>
               </CardHeader>
               <CardContent className="space-y-4">
-                {/* Inner sub-tab switcher */}
                 <div className="flex gap-1 p-1 bg-secondary/40 rounded-lg w-fit flex-wrap">
                   {checklistTabs.map(({ type, label, icon }) => {
-                    const prog  = clProgress[type] || {};
-                    const data  = checklistTabs.find(t => t.type === type)!.data;
+                    const prog = clProgress[type] || {};
+                    const data = checklistTabs.find(t => t.type === type)!.data;
                     const total = data.reduce((s: number, sec: any) => s + sec.items.length, 0);
-                    const done  = data.reduce((s: number, sec: any) => s + sec.items.filter((i: string) => prog[`${sec.category}::${i}`]).length, 0);
-                    const pct   = total > 0 ? Math.round((done / total) * 100) : 0;
+                    const done = data.reduce((s: number, sec: any) => s + sec.items.filter((i: string) => prog[`${sec.category}::${i}`]).length, 0);
+                    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
                     const isActive = activeChecklistTab === type;
                     return (
                       <button
                         key={type}
                         onClick={() => setActiveChecklistTab(type)}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
-                          isActive
-                            ? 'bg-background text-foreground shadow-sm'
-                            : 'text-muted-foreground hover:text-foreground'
-                        }`}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${isActive ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                          }`}
                       >
-                        {icon}
-                        {label}
+                        {icon}{label}
                         {pct > 0 && (
                           <span className={`ml-1 text-xs px-1.5 py-0.5 rounded-full ${isActive ? 'bg-primary/10 text-primary' : 'bg-secondary text-muted-foreground'}`}>
                             {pct}%
@@ -1043,27 +1511,466 @@ export default function ProjectDetail() {
                     );
                   })}
                 </div>
-
-                {/* Render the active checklist content */}
                 {checklistTabs.map(({ type, data }) =>
-                  activeChecklistTab === type ? (
-                    <div key={type}>{renderChecklistContent(type, data)}</div>
-                  ) : null
+                  activeChecklistTab === type ? <div key={type}>{renderChecklistContent(type, data)}</div> : null
                 )}
               </CardContent>
             </Card>
           </TabsContent>
 
-          {/* ── Architecture ── */}
-          <TabsContent value="architecture" className="space-y-4">
-            <Card className="p-12 text-center">
-              <Network className="h-16 w-16 mx-auto text-primary/40 mb-4" />
-              <p className="text-lg font-semibold">Application Architecture</p>
-              <p className="text-sm text-muted-foreground mt-2 max-w-md mx-auto">
-                Document and visualize the target application's architecture — network topology, service maps, data flows, and component diagrams.
-              </p>
-              <Button variant="outline" className="mt-6" disabled><Plus className="h-4 w-4 mr-2" />Add Architecture Diagram</Button>
-            </Card>
+          {/* ── ARCHITECTURE ── */}
+          <TabsContent value="architecture" className="space-y-6">
+ 
+            {/* Header */}
+            <div className="flex items-center justify-between flex-wrap gap-4">
+              <div>
+                <h3 className="text-lg font-semibold flex items-center gap-2">
+                  <Network className="h-5 w-5 text-primary" />
+                  Application Architecture
+                </h3>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  Document the target's architecture — add components to auto-generate a map, or upload an existing diagram
+                </p>
+              </div>
+              {/* Mode switcher */}
+              <div className="flex gap-1 p-1 bg-secondary/40 rounded-lg">
+                <button
+                  onClick={() => setArchMode('builder')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                    archMode === 'builder'
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <Cpu className="h-3.5 w-3.5" />
+                  Component Builder
+                </button>
+                <button
+                  onClick={() => setArchMode('upload')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                    archMode === 'upload'
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  Upload Diagram
+                </button>
+              </div>
+            </div>
+ 
+            {/* ── COMPONENT BUILDER MODE ── */}
+            {archMode === 'builder' && (
+              <div className="space-y-4">
+ 
+                {/* Component type legend */}
+                <div className="flex flex-wrap gap-2 items-center">
+                  <span className="text-xs text-muted-foreground">Component types:</span>
+                  {([
+                    { type: 'frontend',     label: 'Frontend',      color: 'bg-blue-500/20 text-blue-400 border-blue-500/30',    icon: '🖥️'  },
+                    { type: 'api',          label: 'API',           color: 'bg-green-500/20 text-green-400 border-green-500/30', icon: '🔌'  },
+                    { type: 'server',       label: 'Server',        color: 'bg-orange-500/20 text-orange-400 border-orange-500/30', icon: '⚙️' },
+                    { type: 'database',     label: 'Database',      color: 'bg-purple-500/20 text-purple-400 border-purple-500/30', icon: '🗄️' },
+                    { type: 'cloud',        label: 'Cloud',         color: 'bg-sky-500/20 text-sky-400 border-sky-500/30',       icon: '☁️'  },
+                    { type: 'firewall',     label: 'Firewall',      color: 'bg-red-500/20 text-red-400 border-red-500/30',       icon: '🔥'  },
+                    { type: 'loadbalancer', label: 'Load Balancer', color: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30', icon: '⚖️' },
+                    { type: 'mobile',       label: 'Mobile',        color: 'bg-pink-500/20 text-pink-400 border-pink-500/30',    icon: '📱'  },
+                    { type: 'external',     label: 'External',      color: 'bg-gray-500/20 text-gray-400 border-gray-500/30',    icon: '🌐'  },
+                  ] as const).map(({ type, label, color, icon }) => (
+                    <span key={type} className={`text-xs px-2 py-0.5 rounded-full border font-medium ${color}`}>
+                      {icon} {label}
+                    </span>
+                  ))}
+                </div>
+ 
+                {/* Add component button */}
+                {!addingComponent && (
+                  <Button
+                    variant="outline"
+                    className="w-full border-dashed border-primary/30 hover:border-primary/60 hover:bg-primary/5 transition-colors"
+                    onClick={() => setAddingComponent(true)}
+                  >
+                    <Plus className="h-4 w-4 mr-2 text-primary" />
+                    Add Component
+                  </Button>
+                )}
+ 
+                {/* Add component form */}
+                {addingComponent && (
+                  <Card className="border-primary/30 bg-primary/5">
+                    <CardContent className="p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-semibold text-primary">New Component</p>
+                        <button onClick={() => { setAddingComponent(false); setNewComp({ name: '', type: 'server', ip: '', port: '', tech: '', notes: '' }); }}>
+                          <X className="h-4 w-4 text-muted-foreground hover:text-foreground" />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Name *</Label>
+                          <Input
+                            placeholder="e.g., React Frontend"
+                            className="h-8 text-sm bg-background"
+                            value={newComp.name}
+                            onChange={e => setNewComp(p => ({ ...p, name: e.target.value }))}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Type *</Label>
+                          <Select value={newComp.type} onValueChange={v => setNewComp(p => ({ ...p, type: v as any }))}>
+                            <SelectTrigger className="h-8 text-sm bg-background"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="frontend">🖥️ Frontend</SelectItem>
+                              <SelectItem value="api">🔌 API</SelectItem>
+                              <SelectItem value="server">⚙️ Server</SelectItem>
+                              <SelectItem value="database">🗄️ Database</SelectItem>
+                              <SelectItem value="cloud">☁️ Cloud</SelectItem>
+                              <SelectItem value="firewall">🔥 Firewall</SelectItem>
+                              <SelectItem value="loadbalancer">⚖️ Load Balancer</SelectItem>
+                              <SelectItem value="mobile">📱 Mobile</SelectItem>
+                              <SelectItem value="external">🌐 External</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">IP / Hostname</Label>
+                          <Input placeholder="e.g., 192.168.1.10" className="h-8 text-sm bg-background font-mono"
+                            value={newComp.ip} onChange={e => setNewComp(p => ({ ...p, ip: e.target.value }))} />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Port(s)</Label>
+                          <Input placeholder="e.g., 80, 443, 8080" className="h-8 text-sm bg-background font-mono"
+                            value={newComp.port} onChange={e => setNewComp(p => ({ ...p, port: e.target.value }))} />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Technology</Label>
+                          <Input placeholder="e.g., React, Node.js, MySQL" className="h-8 text-sm bg-background"
+                            value={newComp.tech} onChange={e => setNewComp(p => ({ ...p, tech: e.target.value }))} />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Notes</Label>
+                          <Input placeholder="Any relevant notes" className="h-8 text-sm bg-background"
+                            value={newComp.notes} onChange={e => setNewComp(p => ({ ...p, notes: e.target.value }))} />
+                        </div>
+                      </div>
+                      {/* Connect to existing */}
+                      {archComponents.length > 0 && (
+                        <div className="space-y-1">
+                          <Label className="text-xs">Connects to (optional)</Label>
+                          <div className="flex flex-wrap gap-2 mt-1">
+                            {archComponents.map(c => (
+                              <button
+                                key={c.id}
+                                type="button"
+                                onClick={() => {
+                                  setNewComp(p => ({
+                                    ...p,
+                                    // store connections temporarily in notes — handled on save
+                                  }));
+                                }}
+                                className="text-xs px-2 py-1 rounded-full border border-border/50 bg-secondary/40 text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors"
+                              >
+                                {c.name}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      <div className="flex justify-end gap-2 pt-1">
+                        <Button variant="ghost" size="sm" onClick={() => { setAddingComponent(false); setNewComp({ name: '', type: 'server', ip: '', port: '', tech: '', notes: '' }); }}>
+                          Cancel
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="gradient-technieum"
+                          onClick={() => {
+                            if (!newComp.name.trim()) { toast.error('Component name is required'); return; }
+                            const comp: ArchComponent = {
+                              id: crypto.randomUUID(),
+                              ...newComp,
+                              connections: [],
+                            };
+                            setArchComponents(prev => [...prev, comp]);
+                            setNewComp({ name: '', type: 'server', ip: '', port: '', tech: '', notes: '' });
+                            setAddingComponent(false);
+                            toast.success('Component added');
+                          }}
+                        >
+                          Add Component
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+ 
+                {/* Component list + auto-generated diagram */}
+                {archComponents.length > 0 ? (
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+ 
+                    {/* Left: Component list */}
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+                        Components ({archComponents.length})
+                      </p>
+                      {archComponents.map(comp => {
+                        const typeStyles: Record<string, string> = {
+                          frontend:     'bg-blue-500/10 text-blue-400 border-blue-500/20',
+                          api:          'bg-green-500/10 text-green-400 border-green-500/20',
+                          server:       'bg-orange-500/10 text-orange-400 border-orange-500/20',
+                          database:     'bg-purple-500/10 text-purple-400 border-purple-500/20',
+                          cloud:        'bg-sky-500/10 text-sky-400 border-sky-500/20',
+                          firewall:     'bg-red-500/10 text-red-400 border-red-500/20',
+                          loadbalancer: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
+                          mobile:       'bg-pink-500/10 text-pink-400 border-pink-500/20',
+                          external:     'bg-gray-500/10 text-gray-400 border-gray-500/20',
+                        };
+                        const typeIcons: Record<string, string> = {
+                          frontend: '🖥️', api: '🔌', server: '⚙️', database: '🗄️',
+                          cloud: '☁️', firewall: '🔥', loadbalancer: '⚖️', mobile: '📱', external: '🌐',
+                        };
+                        return (
+                          <Card key={comp.id} className="group">
+                            <CardContent className="p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="flex items-start gap-3 flex-1 min-w-0">
+                                  <span className={`mt-0.5 shrink-0 text-xs px-2 py-1 rounded-full border font-medium ${typeStyles[comp.type]}`}>
+                                    {typeIcons[comp.type]} {comp.type}
+                                  </span>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="font-semibold text-sm truncate">{comp.name}</p>
+                                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
+                                      {comp.ip   && <span className="text-xs font-mono text-muted-foreground">{comp.ip}</span>}
+                                      {comp.port && <span className="text-xs font-mono text-muted-foreground">:{comp.port}</span>}
+                                      {comp.tech && <span className="text-xs text-muted-foreground">{comp.tech}</span>}
+                                    </div>
+                                    {comp.notes && <p className="text-xs text-muted-foreground mt-1 truncate">{comp.notes}</p>}
+                                  </div>
+                                </div>
+                                <button
+                                  onClick={() => {
+                                    setArchComponents(prev => prev.filter(c => c.id !== comp.id));
+                                    toast.success('Component removed');
+                                  }}
+                                  className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                                >
+                                  <Trash2 className="h-4 w-4 text-destructive/60 hover:text-destructive" />
+                                </button>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        );
+                      })}
+                    </div>
+ 
+                    {/* Right: Auto-generated visual map */}
+                    <div>
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+                        Architecture Map
+                      </p>
+                      <Card className="border-border/50 bg-secondary/10 overflow-hidden">
+                        <CardContent className="p-4">
+                          {/* Visual grid diagram */}
+                          <div className="relative min-h-64 flex flex-col items-center gap-3 py-4">
+                            {/* Group by type layers */}
+                            {(['firewall', 'loadbalancer', 'frontend', 'mobile', 'api', 'server', 'database', 'cloud', 'external'] as const)
+                              .map(layer => {
+                                const comps = archComponents.filter(c => c.type === layer);
+                                if (comps.length === 0) return null;
+                                const layerColors: Record<string, string> = {
+                                  firewall: 'border-red-500/40 bg-red-500/5',
+                                  loadbalancer: 'border-yellow-500/40 bg-yellow-500/5',
+                                  frontend: 'border-blue-500/40 bg-blue-500/5',
+                                  mobile: 'border-pink-500/40 bg-pink-500/5',
+                                  api: 'border-green-500/40 bg-green-500/5',
+                                  server: 'border-orange-500/40 bg-orange-500/5',
+                                  database: 'border-purple-500/40 bg-purple-500/5',
+                                  cloud: 'border-sky-500/40 bg-sky-500/5',
+                                  external: 'border-gray-500/40 bg-gray-500/5',
+                                };
+                                const layerTextColors: Record<string, string> = {
+                                  firewall: 'text-red-400', loadbalancer: 'text-yellow-400',
+                                  frontend: 'text-blue-400', mobile: 'text-pink-400',
+                                  api: 'text-green-400', server: 'text-orange-400',
+                                  database: 'text-purple-400', cloud: 'text-sky-400',
+                                  external: 'text-gray-400',
+                                };
+                                const icons: Record<string, string> = {
+                                  frontend: '🖥️', api: '🔌', server: '⚙️', database: '🗄️',
+                                  cloud: '☁️', firewall: '🔥', loadbalancer: '⚖️', mobile: '📱', external: '🌐',
+                                };
+                                return (
+                                  <div key={layer} className="w-full">
+                                    {/* Arrow connector (except first layer) */}
+                                    <div className="flex justify-center mb-2">
+                                      <div className="flex flex-col items-center gap-0.5">
+                                        <div className="w-px h-4 bg-border/60" />
+                                        <div className="w-2 h-2 border-r border-b border-border/60 rotate-45 -mt-1.5" />
+                                      </div>
+                                    </div>
+                                    <div className={`rounded-lg border ${layerColors[layer]} p-3`}>
+                                      <p className={`text-xs font-semibold uppercase tracking-wider mb-2 ${layerTextColors[layer]}`}>
+                                        {icons[layer]} {layer}
+                                      </p>
+                                      <div className="flex flex-wrap gap-2">
+                                        {comps.map(c => (
+                                          <div key={c.id} className={`px-3 py-1.5 rounded-md border ${layerColors[layer]} text-center min-w-20`}>
+                                            <p className="text-xs font-semibold truncate max-w-28">{c.name}</p>
+                                            {c.ip && <p className="text-xs font-mono text-muted-foreground/70 truncate">{c.ip}</p>}
+                                            {c.tech && <p className="text-xs text-muted-foreground/60 truncate">{c.tech}</p>}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })
+                              .filter(Boolean)
+                            }
+                          </div>
+                        </CardContent>
+                      </Card>
+ 
+                      {/* Export hint */}
+                      <p className="text-xs text-muted-foreground mt-2 text-center">
+                        Architecture map auto-updates as you add components
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  /* Empty state for builder */
+                  <Card className="border-dashed border-border/40">
+                    <CardContent className="py-16 text-center">
+                      <div className="relative w-20 h-20 mx-auto mb-4">
+                        {/* Mini diagram preview */}
+                        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-10 h-6 rounded bg-blue-500/20 border border-blue-500/30 flex items-center justify-center">
+                          <span className="text-xs">🖥️</span>
+                        </div>
+                        <div className="absolute top-8 left-1/2 -translate-x-1/2 w-px h-4 bg-border/50" />
+                        <div className="absolute top-12 left-1/2 -translate-x-1/2 w-10 h-6 rounded bg-green-500/20 border border-green-500/30 flex items-center justify-center">
+                          <span className="text-xs">🔌</span>
+                        </div>
+                        <div className="absolute bottom-0 left-0 w-10 h-6 rounded bg-purple-500/20 border border-purple-500/30 flex items-center justify-center">
+                          <span className="text-xs">🗄️</span>
+                        </div>
+                        <div className="absolute bottom-0 right-0 w-10 h-6 rounded bg-orange-500/20 border border-orange-500/30 flex items-center justify-center">
+                          <span className="text-xs">⚙️</span>
+                        </div>
+                      </div>
+                      <p className="text-sm font-semibold mt-2">No components yet</p>
+                      <p className="text-xs text-muted-foreground mt-1 max-w-xs mx-auto">
+                        Add servers, databases, APIs, firewalls and more — an architecture map will generate automatically
+                      </p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="mt-4 border-primary/30 text-primary hover:bg-primary/5"
+                        onClick={() => setAddingComponent(true)}
+                      >
+                        <Plus className="h-4 w-4 mr-2" />Add First Component
+                      </Button>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            )}
+ 
+            {/* ── UPLOAD MODE ── */}
+            {archMode === 'upload' && (
+              <div className="space-y-4">
+                {/* Upload drop zone */}
+                <input
+                  ref={archFileRef}
+                  type="file"
+                  className="hidden"
+                  accept=".png,.jpg,.jpeg,.svg,.pdf"
+                  multiple
+                  onChange={e => {
+                    const files = Array.from(e.target.files ?? []);
+                    files.forEach(file => {
+                      const reader = new FileReader();
+                      reader.onload = ev => {
+                        setArchUploads(prev => [...prev, {
+                          name: file.name,
+                          preview: ev.target?.result as string,
+                          notes: '',
+                        }]);
+                      };
+                      reader.readAsDataURL(file);
+                    });
+                    if (archFileRef.current) archFileRef.current.value = '';
+                  }}
+                />
+ 
+                {archUploads.length === 0 ? (
+                  <div
+                    className="border-2 border-dashed border-border/40 rounded-xl p-16 text-center cursor-pointer hover:border-primary/40 hover:bg-primary/5 transition-all group"
+                    onClick={() => archFileRef.current?.click()}
+                  >
+                    <div className="w-16 h-16 mx-auto mb-4 rounded-xl bg-secondary/60 border border-border/50 flex items-center justify-center group-hover:border-primary/40 transition-colors">
+                      <Upload className="h-7 w-7 text-muted-foreground group-hover:text-primary transition-colors" />
+                    </div>
+                    <p className="text-sm font-semibold">Upload Architecture Diagram</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      PNG, JPG, SVG or PDF — Visio exports, draw.io, Lucidchart, screenshots
+                    </p>
+                    <Button variant="outline" size="sm" className="mt-4 pointer-events-none">
+                      Choose Files
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {archUploads.map((upload, idx) => (
+                      <Card key={idx} className="overflow-hidden">
+                        <CardContent className="p-0">
+                          <div className="relative group">
+                            <img
+                              src={upload.preview}
+                              alt={upload.name}
+                              className="w-full max-h-96 object-contain bg-secondary/20"
+                            />
+                            <button
+                              onClick={() => setArchUploads(prev => prev.filter((_, i) => i !== idx))}
+                              className="absolute top-3 right-3 h-7 w-7 rounded-full bg-destructive text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                          <div className="p-4 border-t border-border/50 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <p className="text-sm font-medium truncate">{upload.name}</p>
+                            </div>
+                            <Textarea
+                              placeholder="Add notes about this diagram — scope boundaries, trust zones, data flows..."
+                              className="text-xs resize-none bg-secondary/30"
+                              rows={2}
+                              value={upload.notes}
+                              onChange={e => setArchUploads(prev => prev.map((u, i) => i === idx ? { ...u, notes: e.target.value } : u))}
+                            />
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+ 
+                    {/* Add more */}
+                    <Button
+                      variant="outline"
+                      className="w-full border-dashed"
+                      onClick={() => archFileRef.current?.click()}
+                    >
+                      <Plus className="h-4 w-4 mr-2" />Add Another Diagram
+                    </Button>
+                  </div>
+                )}
+ 
+                <div className="flex flex-wrap gap-2 items-center">
+                  <span className="text-xs text-muted-foreground">Supported formats:</span>
+                  {['PNG', 'JPG', 'SVG', 'PDF', 'draw.io export', 'Visio export', 'Lucidchart'].map(f => (
+                    <span key={f} className="text-xs px-2 py-0.5 rounded-full bg-secondary/60 border border-border/40 text-muted-foreground">{f}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+ 
           </TabsContent>
 
         </Tabs>
