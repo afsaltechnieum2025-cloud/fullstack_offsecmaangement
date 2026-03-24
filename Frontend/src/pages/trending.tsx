@@ -24,7 +24,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Search, Plus, ExternalLink, ImageIcon, X, FileText, Pencil, Trash2 } from 'lucide-react';
 
-const API = 'http://localhost:5000/api/trending';
+const API = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/trending` : 'http://localhost:5000/api/trending';
 
 const emptyForm = {
   name: '',
