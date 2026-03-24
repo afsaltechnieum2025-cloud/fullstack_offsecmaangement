@@ -67,6 +67,10 @@
   }
 }
 
+html {
+  font-size: 14px; /* default is 16px, this scales everything proportionally */
+}
+
 @layer base {
   * {
     @apply border-border;
