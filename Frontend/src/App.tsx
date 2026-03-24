@@ -17,6 +17,8 @@ import Trending from "./pages/trending";
 import ASM from "./pages/asm";
 import LLM from "./pages/llm";
 import HallofFame from "./pages/checklist";
+import SAST from "./pages/sast";
+import TOIP from "./pages/toip";
 
 const queryClient = new QueryClient();
 
@@ -43,6 +45,8 @@ const App = () => (
             <Route path="/users" element={<ProtectedRoute><Users /></ProtectedRoute>} />
             <Route path="/asm" element={<ProtectedRoute><ASM /></ProtectedRoute>} />
             <Route path="/llm" element={<ProtectedRoute><LLM /></ProtectedRoute>} />
+            <Route path="/toip" element={<ProtectedRoute>< TOIP/></ProtectedRoute>} />
+            <Route path="/sast" element={<ProtectedRoute>< SAST/></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

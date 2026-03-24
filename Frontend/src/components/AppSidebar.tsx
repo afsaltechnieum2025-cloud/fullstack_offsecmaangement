@@ -15,6 +15,7 @@ import {
   Network,
   ShieldCheck,
   Menu,
+  Trophy
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -35,7 +36,7 @@ const navigation = [
   { name: 'Dashboard',    href: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'manager', 'tester'] },
   { name: 'Projects',     href: '/projects',  icon: FolderKanban,    roles: ['admin', 'manager', 'tester'] },
   { name: 'Findings',     href: '/findings',  icon: Bug,             roles: ['admin', 'manager', 'tester'] },
-  { name: 'Hall Of Fame', href: '/HallofFame',icon: Pencil,          roles: ['admin', 'manager', 'tester'] },
+  { name: 'Hall Of Fame', href: '/HallofFame',icon: Trophy,          roles: ['admin', 'manager', 'tester'] },
   { name: 'Trending',     href: '/trending',  icon: TrendingUp,      roles: ['admin', 'manager', 'tester'] },
   { name: 'Users',        href: '/users',     icon: Users,           roles: ['admin'] },
   { name: 'ASM',          href: '/asm',       icon: Globe,           roles: ['admin'] },
@@ -124,8 +125,8 @@ export default function AppSidebar() {
               />
               <div className="flex flex-col leading-tight">
                 <span className="font-bold text-sm text-gradient">Technieum</span>
-                <span className="font-semibold text-xs text-muted-foreground">OffSec</span>
-                <span className="font-semibold text-xs text-muted-foreground">Management Portal</span>
+                <span className="font-semibold text-xs text-muted-foreground">OffSec Portal</span>
+                {/* <span className="font-semibold text-xs text-muted-foreground">Management Portal</span> */}
               </div>
             </Link>
           )}
