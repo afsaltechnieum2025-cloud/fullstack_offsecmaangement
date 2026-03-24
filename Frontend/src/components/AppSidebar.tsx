@@ -14,6 +14,7 @@ import {
   Brain,
   Network,
   ShieldCheck,
+  Menu,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -31,16 +32,16 @@ import { useState, useEffect } from 'react';
 import logo from '@/assets/technieum-logo.png';
 
 const navigation = [
-  { name: 'Dashboard',        href: '/dashboard',        icon: LayoutDashboard, roles: ['admin', 'manager', 'tester'] },
-  { name: 'Projects',         href: '/projects',         icon: FolderKanban,    roles: ['admin', 'manager', 'tester'] },
-  { name: 'Findings',         href: '/findings',         icon: Bug,             roles: ['admin', 'manager', 'tester'] },
-  { name: 'Content Creation', href: '/Content-Creation', icon: Pencil,          roles: ['admin', 'manager', 'tester'] },
-  { name: 'Trending',         href: '/trending',         icon: TrendingUp,      roles: ['admin', 'manager', 'tester'] },
-  { name: 'Users',            href: '/users',            icon: Users,           roles: ['admin'] },
-  { name: 'ASM',              href: '/asm',              icon: Globe,           roles: ['admin'] },
-  { name: 'LLM Suite',        href: '/llm',              icon: Brain,           roles: ['admin'] },
-  { name: 'TOIP',             href: '/toip',             icon: Network,         roles: ['admin'] },
-  { name: 'SAST',             href: '/sast',             icon: ShieldCheck,     roles: ['admin'] },
+  { name: 'Dashboard',    href: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'manager', 'tester'] },
+  { name: 'Projects',     href: '/projects',  icon: FolderKanban,    roles: ['admin', 'manager', 'tester'] },
+  { name: 'Findings',     href: '/findings',  icon: Bug,             roles: ['admin', 'manager', 'tester'] },
+  { name: 'Hall Of Fame', href: '/HallofFame',icon: Pencil,          roles: ['admin', 'manager', 'tester'] },
+  { name: 'Trending',     href: '/trending',  icon: TrendingUp,      roles: ['admin', 'manager', 'tester'] },
+  { name: 'Users',        href: '/users',     icon: Users,           roles: ['admin'] },
+  { name: 'ASM',          href: '/asm',       icon: Globe,           roles: ['admin'] },
+  { name: 'LLM Suite',    href: '/llm',       icon: Brain,           roles: ['admin'] },
+  { name: 'TOIP',         href: '/toip',      icon: Network,         roles: ['admin'] },
+  { name: 'SAST',         href: '/sast',      icon: ShieldCheck,     roles: ['admin'] },
 ];
 
 export default function AppSidebar() {
@@ -48,18 +49,20 @@ export default function AppSidebar() {
   const location = useLocation();
   const navigate = useNavigate();
 
+  // Reactive isMobile using state
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
   const [collapsed, setCollapsed] = useState(() => window.innerWidth < 768);
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
 
   useEffect(() => {
     const handleResize = () => {
-      if (window.innerWidth < 768) setCollapsed(true);
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (mobile) setCollapsed(true);
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
-
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
 
   const handleLogout = async () => {
     await logout();
@@ -70,19 +73,41 @@ export default function AppSidebar() {
     (item) => role && item.roles.includes(role)
   );
 
+  // On mobile: sidebar is fixed and overlays the page
+  // On desktop: sidebar is sticky and stays in flow
+  const isOpen = !collapsed; // alias for readability
+
   return (
     <>
-      {!collapsed && isMobile && (
+      {/* ── Mobile hamburger button (shown only when sidebar is closed on mobile) ── */}
+      {isMobile && collapsed && (
+        <button
+          onClick={() => setCollapsed(false)}
+          className="fixed top-4 left-4 z-50 h-9 w-9 rounded-lg bg-secondary flex items-center justify-center"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+      )}
+
+      {/* ── Overlay backdrop (mobile only, when sidebar is open) ── */}
+      {isMobile && isOpen && (
         <div
-          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          className="fixed inset-0 bg-black/60 z-40"
           onClick={() => setCollapsed(true)}
         />
       )}
 
+      {/* ── Sidebar ── */}
       <aside
         className={cn(
-          "flex flex-col h-screen gradient-sidebar border-r border-border/50 transition-all duration-300 sticky top-0 z-50 shrink-0",
-          collapsed ? "w-16" : "w-64"
+          // Base styles
+          "flex flex-col h-screen gradient-sidebar border-r border-border/50 transition-all duration-300 z-50 shrink-0",
+          // Desktop: sticky in-flow, always visible (collapsed or expanded)
+          !isMobile && "sticky top-0",
+          !isMobile && (collapsed ? "w-16" : "w-64"),
+          // Mobile: fixed overlay, slides in/out
+          isMobile && "fixed top-0 left-0",
+          isMobile && (isOpen ? "w-64 translate-x-0" : "-translate-x-full w-64"),
         )}
       >
         {/* Logo Header */}
@@ -90,7 +115,6 @@ export default function AppSidebar() {
           "flex items-center border-b border-border/50 p-4 min-h-[64px]",
           collapsed ? "justify-center" : "justify-between"
         )}>
-          {/* Logo + name — only when expanded */}
           {!collapsed && (
             <Link to="/dashboard" className="flex items-start gap-2 flex-1 min-w-0">
               <img
@@ -106,7 +130,6 @@ export default function AppSidebar() {
             </Link>
           )}
 
-          {/* Toggle button — always visible */}
           <Button
             variant="ghost"
             size="icon"

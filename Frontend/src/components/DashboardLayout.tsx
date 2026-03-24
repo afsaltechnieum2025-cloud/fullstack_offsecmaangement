@@ -31,8 +31,8 @@ export default function DashboardLayout({ children, title, description }: Dashbo
 
   if (!isAuthenticated) return null;
 
-  const userNotifications = notifications.filter(n => n.userId === user?.id || user?.role === 'admin');
-  const unreadCount = userNotifications.filter(n => !n.read).length;
+  // const userNotifications = notifications.filter(n => n.userId === user?.id || user?.role === 'admin');
+  // const unreadCount = userNotifications.filter(n => !n.read).length;
 
   return (
     <div className="flex min-h-screen w-full bg-background">
@@ -41,7 +41,7 @@ export default function DashboardLayout({ children, title, description }: Dashbo
         {/* Header */}
         <header className="sticky top-0 z-40 border-b border-border/50 bg-background/80 backdrop-blur-xl">
           <div className="flex items-center justify-between px-6 py-4">
-            <div>
+            <div className="pl-10 md:pl-0"> {/* ← add this pl-10 for mobile hamburger clearance */}
               <h1 className="text-2xl font-bold">{title}</h1>
               {description && (
                 <p className="text-sm text-muted-foreground mt-0.5">{description}</p>
@@ -52,18 +52,18 @@ export default function DashboardLayout({ children, title, description }: Dashbo
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="icon" className="relative">
                     <Bell className="h-5 w-5" />
-                    {unreadCount > 0 && (
+                    {/* {unreadCount > 0 && (
                       <span className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center font-medium">
                         {unreadCount}
                       </span>
-                    )}
+                    )} */}
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-80">
                   <div className="px-3 py-2 border-b border-border">
                     <p className="font-semibold">Notifications</p>
                   </div>
-                  {userNotifications.length === 0 ? (
+                  {/* {userNotifications.length === 0 ? (
                     <div className="px-3 py-4 text-sm text-muted-foreground text-center">
                       No notifications
                     </div>
@@ -81,7 +81,7 @@ export default function DashboardLayout({ children, title, description }: Dashbo
                         </p>
                       </DropdownMenuItem>
                     ))
-                  )}
+                  )} */}
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
