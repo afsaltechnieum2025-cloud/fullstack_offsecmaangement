@@ -1,17 +1,17 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import {
-  Search, Plus, Filter, AlertTriangle, Trophy,
-  ChevronDown, ChevronUp, ExternalLink, Trash2, X,
-  ShieldCheck, Bug, Star, Award, TrendingUp,
+  Search, Plus, Trophy, ChevronDown, ChevronUp,
+  Trash2, ShieldCheck, Bug, Star, BookOpen,
+  Bold, Italic, List, Heading2, Quote, Code,
+  AlignLeft, ExternalLink,
 } from 'lucide-react';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -41,11 +41,11 @@ interface HofFinding {
   severity: Severity;
   category: string | null;
   status: Status;
-  bounty_amount: number | null;
   cve_id: string | null;
   reported_at: string | null;
   resolved_at: string | null;
   public_url: string | null;
+  blog_url: string | null;
   rejection_reason: string | null;
   notes: string | null;
   created_at: string;
@@ -67,25 +67,13 @@ interface AppUser {
   role: string;
 }
 
-interface Project {
-  id: string;
-  name: string;
-  platform: string | null;
-  status: string;
-}
-
 interface Stats {
   total_findings: number;
-  accepted: number;
-  rejected: number;
-  submitted: number;
-  triaged: number;
+  disclosure_count: number;
   cve_count: number;
   critical_high: number;
-  total_bounty: number;
   program_count: number;
   researcher_count: number;
-  acceptance_rate: number;
 }
 
 interface LeaderboardEntry {
@@ -93,10 +81,10 @@ interface LeaderboardEntry {
   username: string;
   full_name: string | null;
   role: string;
-  total_bounty: number;
+  total_points: number;
   cve_count: number;
   finding_count: number;
-  accepted_count: number;
+  disclosure_count: number;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -104,92 +92,199 @@ interface LeaderboardEntry {
 const API = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 const HOF_API = `${API}/wof`;
 
-const SEVERITY_STYLES: Record<string, { bg: string; text: string; border: string }> = {
-  critical: { bg: 'bg-red-500/10', text: 'text-red-500', border: 'border-red-500/30' },
-  high: { bg: 'bg-orange-500/10', text: 'text-orange-500', border: 'border-orange-500/30' },
-  medium: { bg: 'bg-yellow-500/10', text: 'text-yellow-500', border: 'border-yellow-500/30' },
-  low: { bg: 'bg-green-500/10', text: 'text-green-500', border: 'border-green-500/30' },
-  informational: { bg: 'bg-blue-500/10', text: 'text-blue-500', border: 'border-blue-500/30' },
+// ── Unified color system: primary for most, red only for critical ──
+// severity display label + badge style
+const SEVERITY_CONFIG: Record<string, { label: string; cls: string }> = {
+  critical:      { label: 'Critical',      cls: 'bg-red-500/15 text-red-400 border-red-500/30' },
+  high:          { label: 'High',          cls: 'bg-primary/15 text-primary border-primary/30' },
+  medium:        { label: 'Medium',        cls: 'bg-primary/10 text-primary/80 border-primary/20' },
+  low:           { label: 'Low',           cls: 'bg-primary/5 text-primary/60 border-primary/10' },
+  informational: { label: 'Info',          cls: 'bg-muted text-muted-foreground border-border' },
 };
 
-const STATUS_STYLES: Record<string, string> = {
-  accepted: 'bg-green-500/10 text-green-500 border-green-500/30',
-  rejected: 'bg-red-500/10 text-red-500 border-red-500/30',
-  submitted: 'bg-yellow-500/10 text-yellow-500 border-yellow-500/30',
-  triaged: 'bg-blue-500/10 text-blue-500 border-blue-500/30',
-  duplicate: 'bg-secondary text-muted-foreground border-border',
-  informative: 'bg-purple-500/10 text-purple-500 border-purple-500/30',
-  fixed: 'bg-teal-500/10 text-teal-500 border-teal-500/30',
+// status → display label (accepted/fixed = "Disclosure")
+const STATUS_LABEL: Record<string, string> = {
+  accepted:   'Disclosure',
+  fixed:      'Disclosure',
+  submitted:  'Submitted',
+  triaged:    'Triaged',
+  rejected:   'Rejected',
+  duplicate:  'Duplicate',
+  informative:'Informative',
 };
 
-const TL_COLOR: Record<string, string> = {
-  accepted: 'bg-green-500', rejected: 'bg-red-500',
-  triaged: 'bg-blue-500', fixed: 'bg-teal-500', default: 'bg-muted-foreground',
+const STATUS_CLS: Record<string, string> = {
+  accepted:   'bg-primary/15 text-primary border-primary/30',
+  fixed:      'bg-primary/15 text-primary border-primary/30',
+  submitted:  'bg-muted text-muted-foreground border-border',
+  triaged:    'bg-primary/10 text-primary/70 border-primary/20',
+  rejected:   'bg-red-500/10 text-red-400 border-red-500/20',
+  duplicate:  'bg-muted text-muted-foreground border-border',
+  informative:'bg-muted text-muted-foreground border-border',
 };
 
 const AVATAR_COLORS = [
-  'bg-red-500/20 text-red-400', 'bg-orange-500/20 text-orange-400',
-  'bg-yellow-500/20 text-yellow-400', 'bg-green-500/20 text-green-400',
-  'bg-blue-500/20 text-blue-400', 'bg-purple-500/20 text-purple-400',
-  'bg-pink-500/20 text-pink-400', 'bg-teal-500/20 text-teal-400',
+  'bg-primary/20 text-primary',
+  'bg-red-500/20 text-red-400',
+  'bg-primary/30 text-primary',
+  'bg-primary/15 text-primary/80',
+  'bg-red-400/20 text-red-300',
+  'bg-primary/25 text-primary',
+  'bg-red-500/15 text-red-400',
+  'bg-primary/10 text-primary/70',
 ];
 
+const TL_COLOR: Record<string, string> = {
+  accepted: 'bg-primary', rejected: 'bg-red-500',
+  triaged: 'bg-primary/60', fixed: 'bg-primary', default: 'bg-border',
+};
+
 const avatarColor = (name: string) => AVATAR_COLORS[(name?.charCodeAt(0) ?? 0) % AVATAR_COLORS.length];
-const initials = (name: string) => (name ?? '?').slice(0, 2).toUpperCase();
-const fmtDate = (d: string | null) =>
+const initials    = (name: string) => (name ?? '?').slice(0, 2).toUpperCase();
+const fmtDate     = (d: string | null) =>
   d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
 const displayName = (f: HofFinding) =>
-  f.researcher_full_name
-    ? `${f.researcher_full_name} (@${f.researcher_name})`
-    : `@${f.researcher_name}`;
+  f.researcher_full_name ? `${f.researcher_full_name} (@${f.researcher_name})` : `@${f.researcher_name}`;
 
-const getSeverityBadge = (severity: string) => {
+const SeverityBadge = ({ severity }: { severity: string }) => {
   const s = severity?.toLowerCase() ?? 'informational';
-  const style = SEVERITY_STYLES[s] ?? SEVERITY_STYLES.informational;
+  const cfg = SEVERITY_CONFIG[s] ?? SEVERITY_CONFIG.informational;
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${style.bg} ${style.text} ${style.border}`}>
-      {s.charAt(0).toUpperCase() + s.slice(1)}
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${cfg.cls}`}>
+      {cfg.label}
     </span>
   );
 };
 
-const getStatusBadge = (status: string) => {
-  const cls = STATUS_STYLES[status] ?? STATUS_STYLES.submitted;
+const StatusBadge = ({ status }: { status: string }) => {
+  const cls = STATUS_CLS[status] ?? STATUS_CLS.submitted;
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${cls}`}>
-      {status.charAt(0).toUpperCase() + status.slice(1)}
+      {STATUS_LABEL[status] ?? status}
     </span>
   );
 };
 
-// ─── Add Finding Modal — FULL FIELDS ─────────────────────────────────────────
+// ─── Rich Text Blog Editor ────────────────────────────────────────────────────
 
-function AddFindingModal({ users, projects, onClose, onSaved, token }: {
-  users: AppUser[]; projects: Project[];
-  onClose: () => void; onSaved: () => void; token: string;
+function BlogEditor({ value, onChange, placeholder }: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  const editorRef = useRef<HTMLDivElement>(null);
+
+  const exec = (cmd: string, val?: string) => {
+    document.execCommand(cmd, false, val);
+    editorRef.current?.focus();
+    syncContent();
+  };
+
+  const syncContent = () => {
+    if (editorRef.current) onChange(editorRef.current.innerHTML);
+  };
+
+  // Sync external value on first mount only
+  useEffect(() => {
+    if (editorRef.current && !editorRef.current.innerHTML && value) {
+      editorRef.current.innerHTML = value;
+    }
+  }, []);
+
+  const tools = [
+    { icon: <Bold className="h-3.5 w-3.5" />, cmd: 'bold', title: 'Bold' },
+    { icon: <Italic className="h-3.5 w-3.5" />, cmd: 'italic', title: 'Italic' },
+    { icon: <Heading2 className="h-3.5 w-3.5" />, cmd: 'formatBlock', val: 'h3', title: 'Heading' },
+    { icon: <List className="h-3.5 w-3.5" />, cmd: 'insertUnorderedList', title: 'Bullet list' },
+    { icon: <Quote className="h-3.5 w-3.5" />, cmd: 'formatBlock', val: 'blockquote', title: 'Quote' },
+    { icon: <Code className="h-3.5 w-3.5" />, cmd: 'formatBlock', val: 'pre', title: 'Code block' },
+    { icon: <AlignLeft className="h-3.5 w-3.5" />, cmd: 'formatBlock', val: 'p', title: 'Paragraph' },
+  ];
+
+  return (
+    <div className="rounded-lg border border-border/60 overflow-hidden bg-secondary/20 focus-within:border-primary/50 transition-colors">
+      {/* Toolbar */}
+      <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-border/40 bg-secondary/40 flex-wrap">
+        {tools.map(t => (
+          <button
+            key={t.title}
+            type="button"
+            title={t.title}
+            onMouseDown={e => { e.preventDefault(); exec(t.cmd, t.val); }}
+            className="p-1.5 rounded hover:bg-primary/10 hover:text-primary text-muted-foreground transition-colors"
+          >
+            {t.icon}
+          </button>
+        ))}
+      </div>
+      {/* Editable area */}
+      <div
+        ref={editorRef}
+        contentEditable
+        onInput={syncContent}
+        onBlur={syncContent}
+        data-placeholder={placeholder ?? 'Write your vulnerability write-up here…'}
+        className="
+          min-h-[220px] max-h-[420px] overflow-y-auto p-4 text-sm leading-relaxed outline-none
+          text-foreground
+          [&_h3]:text-base [&_h3]:font-bold [&_h3]:text-primary [&_h3]:mt-4 [&_h3]:mb-2
+          [&_p]:mb-2 [&_p]:leading-relaxed
+          [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-2
+          [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:mb-2
+          [&_li]:mb-1
+          [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:pl-3 [&_blockquote]:italic [&_blockquote]:text-muted-foreground [&_blockquote]:my-2
+          [&_pre]:bg-black/30 [&_pre]:rounded [&_pre]:p-3 [&_pre]:font-mono [&_pre]:text-xs [&_pre]:overflow-x-auto [&_pre]:my-2
+          [&_strong]:font-bold [&_strong]:text-foreground
+          [&_em]:italic
+          empty:before:content-[attr(data-placeholder)] empty:before:text-muted-foreground/40 empty:before:pointer-events-none
+        "
+      />
+    </div>
+  );
+}
+
+// ─── Blog Reader (display only) ───────────────────────────────────────────────
+
+function BlogReader({ html }: { html: string }) {
+  if (!html || html === '<br>' || html.trim() === '') return null;
+  return (
+    <div
+      className="
+        text-sm leading-relaxed text-muted-foreground
+        [&_h3]:text-base [&_h3]:font-bold [&_h3]:text-foreground [&_h3]:mt-4 [&_h3]:mb-2
+        [&_p]:mb-2 [&_p]:leading-relaxed
+        [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-2
+        [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:mb-2
+        [&_li]:mb-1
+        [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:pl-3 [&_blockquote]:italic [&_blockquote]:text-muted-foreground [&_blockquote]:my-2
+        [&_pre]:bg-black/30 [&_pre]:rounded [&_pre]:p-3 [&_pre]:font-mono [&_pre]:text-xs [&_pre]:overflow-x-auto [&_pre]:my-2
+        [&_strong]:font-bold [&_strong]:text-foreground
+        [&_em]:italic
+        [&_a]:text-primary [&_a]:underline
+      "
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
+
+// ─── Add Finding Modal ────────────────────────────────────────────────────────
+
+function AddFindingModal({ users, onClose, onSaved, token }: {
+  users: AppUser[];
+  onClose: () => void;
+  onSaved: () => void;
+  token: string;
 }) {
   const [form, setForm] = useState({
     user_id: '',
-    project_id: '',
     title: '',
-    description: '',
-    steps_to_reproduce: '',
-    impact: '',
     severity: 'medium',
-    category: '',
     status: 'submitted',
-    bounty_amount: '',
     cve_id: '',
     reported_at: '',
-    public_url: '',
-    rejection_reason: '',
-    notes: '',
+    blog_content: '',
   });
   const [saving, setSaving] = useState(false);
-
-  const setField = (k: string) =>
-    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-      setForm(f => ({ ...f, [k]: e.target.value }));
 
   const save = async () => {
     if (!form.title.trim() || !form.user_id) {
@@ -203,27 +298,20 @@ function AddFindingModal({ users, projects, onClose, onSaved, token }: {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           user_id: Number(form.user_id),
-          project_id: form.project_id === 'none' || !form.project_id ? null : form.project_id,
           title: form.title,
-          description: form.description || null,
-          steps_to_reproduce: form.steps_to_reproduce || null,
-          impact: form.impact || null,
           severity: form.severity,
-          category: form.category || null,
           status: form.status,
-          bounty_amount: form.bounty_amount ? Number(form.bounty_amount) : null,
           cve_id: form.cve_id || null,
           reported_at: form.reported_at || null,
-          public_url: form.public_url || null,
-          rejection_reason: form.rejection_reason || null,
-          notes: form.notes || null,
+          // store rich HTML in blog_url field (repurposed as blog_content)
+          blog_url: form.blog_content || null,
         }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'Failed to save');
       }
-      toast.success('Finding added to Hall of Fame!');
+      toast.success('Finding added!');
       onSaved();
       onClose();
     } catch (err: any) {
@@ -236,38 +324,26 @@ function AddFindingModal({ users, projects, onClose, onSaved, token }: {
   return (
     <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
       <DialogHeader>
-        <DialogTitle>Add New Hall of Fame Finding</DialogTitle>
+        <DialogTitle className="flex items-center gap-2">
+          <Bug className="h-4 w-4 text-primary" />
+          Add New Finding
+        </DialogTitle>
       </DialogHeader>
 
       <div className="space-y-4 mt-4">
-
-        {/* Row 1: Researcher + Project */}
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>Researcher *</Label>
-            <Select value={form.user_id} onValueChange={v => setForm(f => ({ ...f, user_id: v }))}>
-              <SelectTrigger><SelectValue placeholder="Select researcher" /></SelectTrigger>
-              <SelectContent>
-                {users.map(u => (
-                  <SelectItem key={u.id} value={String(u.id)}>
-                    {u.full_name ? `${u.full_name} (@${u.name})` : `@${u.name}`}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>Project / Target</Label>
-            <Select value={form.project_id} onValueChange={v => setForm(f => ({ ...f, project_id: v }))}>
-              <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">None</SelectItem>
-                {projects.map(p => (
-                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        {/* Researcher */}
+        <div className="space-y-2">
+          <Label>Researcher *</Label>
+          <Select value={form.user_id} onValueChange={v => setForm(f => ({ ...f, user_id: v }))}>
+            <SelectTrigger><SelectValue placeholder="Select researcher" /></SelectTrigger>
+            <SelectContent>
+              {users.map(u => (
+                <SelectItem key={u.id} value={String(u.id)}>
+                  {u.full_name ? `${u.full_name} (@${u.name})` : `@${u.name}`}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         {/* Title */}
@@ -276,16 +352,12 @@ function AddFindingModal({ users, projects, onClose, onSaved, token }: {
           <Input
             placeholder="e.g. IDOR in /api/users/:id allows horizontal privilege escalation"
             value={form.title}
-            onChange={setField('title')}
+            onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
           />
         </div>
 
-        {/* Row 2: Category + Severity + Status */}
-        <div className="grid grid-cols-3 gap-4">
-          <div className="space-y-2">
-            <Label>Category</Label>
-            <Input placeholder="XSS, IDOR, RCE, SQLi…" value={form.category} onChange={setField('category')} />
-          </div>
+        {/* Severity + Status + CVE + Date */}
+        <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
             <Label>Severity</Label>
             <Select value={form.severity} onValueChange={v => setForm(f => ({ ...f, severity: v }))}>
@@ -303,105 +375,39 @@ function AddFindingModal({ users, projects, onClose, onSaved, token }: {
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 {['submitted', 'triaged', 'accepted', 'rejected', 'duplicate', 'informative', 'fixed'].map(s => (
-                  <SelectItem key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</SelectItem>
+                  <SelectItem key={s} value={s}>{STATUS_LABEL[s] ?? s}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
-          </div>
-        </div>
-
-        {/* Description */}
-        <div className="space-y-2">
-          <Label>Description / Problem Statement</Label>
-          <Textarea
-            placeholder="What was the vulnerability? Describe the issue clearly."
-            rows={3}
-            value={form.description}
-            onChange={setField('description')}
-          />
-        </div>
-
-        {/* Steps to Reproduce */}
-        <div className="space-y-2">
-          <Label>Steps to Reproduce</Label>
-          <Textarea
-            placeholder="1. Login as user A&#10;2. Send GET /api/users/101&#10;3. Response returns user B full profile"
-            rows={3}
-            value={form.steps_to_reproduce}
-            onChange={setField('steps_to_reproduce')}
-          />
-        </div>
-
-        {/* Impact */}
-        <div className="space-y-2">
-          <Label>Impact</Label>
-          <Textarea
-            placeholder="Business / security impact of this vulnerability…"
-            rows={2}
-            value={form.impact}
-            onChange={setField('impact')}
-          />
-        </div>
-
-        {/* Row 3: Bounty + CVE */}
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>Bounty Amount ($)</Label>
-            <Input
-              type="number"
-              placeholder="0"
-              value={form.bounty_amount}
-              onChange={setField('bounty_amount')}
-            />
           </div>
           <div className="space-y-2">
             <Label>CVE ID</Label>
             <Input
               placeholder="CVE-2025-XXXX"
               value={form.cve_id}
-              onChange={setField('cve_id')}
+              onChange={e => setForm(f => ({ ...f, cve_id: e.target.value }))}
             />
           </div>
-        </div>
-
-        {/* Row 4: Reported Date + Public URL */}
-        <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
             <Label>Reported Date</Label>
             <Input
               type="date"
               value={form.reported_at}
-              onChange={setField('reported_at')}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Public Disclosure URL</Label>
-            <Input
-              placeholder="https://hackerone.com/reports/…"
-              value={form.public_url}
-              onChange={setField('public_url')}
+              onChange={e => setForm(f => ({ ...f, reported_at: e.target.value }))}
             />
           </div>
         </div>
 
-        {/* Rejection Reason */}
+        {/* Blog write-up */}
         <div className="space-y-2">
-          <Label>Rejection Reason <span className="text-muted-foreground text-xs">(if rejected)</span></Label>
-          <Input
-            placeholder="Out of scope, Duplicate, Insufficient impact…"
-            value={form.rejection_reason}
-            onChange={setField('rejection_reason')}
-          />
-        </div>
-
-        {/* Notes */}
-        <div className="space-y-2">
-          <Label>Internal Notes</Label>
-          <Textarea
-            placeholder="Any internal notes for the team…"
-            rows={2}
-            value={form.notes}
-            onChange={setField('notes')}
+          <Label className="flex items-center gap-1.5">
+            <BookOpen className="h-3.5 w-3.5 text-primary" />
+            Vulnerability Write-up
+          </Label>
+          <BlogEditor
+            value={form.blog_content}
+            onChange={v => setForm(f => ({ ...f, blog_content: v }))}
+            placeholder="Write a detailed vulnerability write-up. Use the toolbar above for headings, bullets, code blocks, and quotes…"
           />
         </div>
 
@@ -420,14 +426,18 @@ function AddFindingModal({ users, projects, onClose, onSaved, token }: {
 
 // ─── Detail Modal ─────────────────────────────────────────────────────────────
 
-function DetailModal({ finding, onClose, onUpdate, token }: {
-  finding: HofFinding; onClose: () => void; onUpdate: () => void; token: string;
+function DetailModal({ finding, onClose, onUpdate, token, isAdmin }: {
+  finding: HofFinding;
+  onClose: () => void;
+  onUpdate: () => void;
+  token: string;
+  isAdmin: boolean;
 }) {
-  const [statusVal, setStatusVal] = useState(finding.status);
-  const [bountyVal, setBountyVal] = useState(finding.bounty_amount?.toString() ?? '');
-  const [cveVal, setCveVal] = useState(finding.cve_id ?? '');
-  const [rejectVal, setRejectVal] = useState(finding.rejection_reason ?? '');
-  const [saving, setSaving] = useState(false);
+  const [statusVal, setStatusVal]   = useState(finding.status);
+  const [cveVal, setCveVal]         = useState(finding.cve_id ?? '');
+  const [rejectVal, setRejectVal]   = useState(finding.rejection_reason ?? '');
+  const [blogContent, setBlogContent] = useState(finding.blog_url ?? '');
+  const [saving, setSaving]         = useState(false);
 
   const patch = async () => {
     setSaving(true);
@@ -437,14 +447,14 @@ function DetailModal({ finding, onClose, onUpdate, token }: {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           status: statusVal,
-          bounty_amount: bountyVal ? Number(bountyVal) : null,
           cve_id: cveVal || null,
           rejection_reason: rejectVal || null,
+          blog_url: blogContent || null,
         }),
       });
       if (statusVal !== finding.status) {
         const evtMap: Record<string, string> = {
-          accepted: bountyVal ? `Accepted — Bounty $${bountyVal} awarded` : 'Accepted',
+          accepted: 'Accepted — marked as disclosure',
           rejected: `Rejected${rejectVal ? ': ' + rejectVal : ''}`,
           triaged: 'Triaged by security team',
           fixed: 'Marked as fixed',
@@ -460,8 +470,11 @@ function DetailModal({ finding, onClose, onUpdate, token }: {
       toast.success('Finding updated!');
       onUpdate();
       onClose();
-    } catch { toast.error('Failed to update.'); }
-    finally { setSaving(false); }
+    } catch {
+      toast.error('Failed to update.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -470,22 +483,20 @@ function DetailModal({ finding, onClose, onUpdate, token }: {
         <DialogTitle className="text-base font-semibold leading-snug pr-6">{finding.title}</DialogTitle>
       </DialogHeader>
       <div className="space-y-5 mt-2">
+
+        {/* Badges */}
         <div className="flex flex-wrap gap-2">
-          {getSeverityBadge(finding.severity)}
-          {getStatusBadge(finding.status)}
+          <SeverityBadge severity={finding.severity} />
+          <StatusBadge status={finding.status} />
           {finding.cve_id && (
-            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border bg-purple-500/10 text-purple-500 border-purple-500/30">
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border bg-primary/10 text-primary border-primary/20">
               {finding.cve_id}
-            </span>
-          )}
-          {finding.bounty_amount && (
-            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border bg-green-500/10 text-green-500 border-green-500/30">
-              ${Number(finding.bounty_amount).toLocaleString()}
             </span>
           )}
           {finding.category && <Badge variant="secondary" className="text-xs">{finding.category}</Badge>}
         </div>
 
+        {/* Researcher */}
         <div className="flex items-center gap-3">
           <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold ${avatarColor(finding.researcher_name)}`}>
             {initials(finding.researcher_name)}
@@ -519,22 +530,27 @@ function DetailModal({ finding, onClose, onUpdate, token }: {
             </pre>
           </div>
         )}
-        {finding.public_url && (
+
+        {/* Write-up (read-only display) */}
+        {finding.blog_url && (
           <div>
-            <h4 className="text-sm font-semibold text-primary mb-1">Public Disclosure</h4>
-            <a href={finding.public_url} target="_blank" rel="noreferrer"
-              className="text-sm text-primary hover:underline flex items-center gap-1">
-              <ExternalLink className="h-3 w-3" />{finding.public_url}
-            </a>
+            <h4 className="text-sm font-semibold text-primary mb-3 flex items-center gap-1.5">
+              <BookOpen className="h-3.5 w-3.5" />Vulnerability Write-up
+            </h4>
+            <div className="rounded-lg border border-border/40 bg-secondary/10 p-4">
+              <BlogReader html={finding.blog_url} />
+            </div>
           </div>
         )}
+
         {finding.rejection_reason && (
-          <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
-            <h4 className="text-sm font-semibold text-red-500 mb-1">Rejection Reason</h4>
+          <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
+            <h4 className="text-sm font-semibold text-red-400 mb-1">Rejection Reason</h4>
             <p className="text-sm text-muted-foreground">{finding.rejection_reason}</p>
           </div>
         )}
 
+        {/* Timeline */}
         {finding.timeline && finding.timeline.length > 0 && (
           <div>
             <h4 className="text-sm font-semibold text-primary mb-3">Timeline</h4>
@@ -559,40 +575,45 @@ function DetailModal({ finding, onClose, onUpdate, token }: {
           </div>
         )}
 
-        {/* Update status */}
-        <div className="border-t border-border/50 pt-4 space-y-3">
-          <h4 className="text-sm font-semibold text-primary">Update Status</h4>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label>Status</Label>
-              <Select value={statusVal} onValueChange={v => setStatusVal(v as Status)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {['submitted', 'triaged', 'accepted', 'rejected', 'duplicate', 'informative', 'fixed'].map(s => (
-                    <SelectItem key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+        {/* Admin: update */}
+        {isAdmin && (
+          <div className="border-t border-border/50 pt-4 space-y-4">
+            <h4 className="text-sm font-semibold text-primary">Update Finding</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Status</Label>
+                <Select value={statusVal} onValueChange={v => setStatusVal(v as Status)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {['submitted', 'triaged', 'accepted', 'rejected', 'duplicate', 'informative', 'fixed'].map(s => (
+                      <SelectItem key={s} value={s}>{STATUS_LABEL[s] ?? s}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>CVE ID</Label>
+                <Input placeholder="CVE-2025-XXXX" value={cveVal} onChange={e => setCveVal(e.target.value)} />
+              </div>
+              <div className="col-span-2 space-y-2">
+                <Label>Rejection Reason</Label>
+                <Input placeholder="Out of scope…" value={rejectVal} onChange={e => setRejectVal(e.target.value)} />
+              </div>
             </div>
+            {/* Edit write-up */}
             <div className="space-y-2">
-              <Label>Bounty ($)</Label>
-              <Input type="number" placeholder="0" value={bountyVal} onChange={e => setBountyVal(e.target.value)} />
+              <Label className="flex items-center gap-1.5">
+                <BookOpen className="h-3.5 w-3.5 text-primary" />Edit Write-up
+              </Label>
+              <BlogEditor value={blogContent} onChange={setBlogContent} />
             </div>
-            <div className="space-y-2">
-              <Label>CVE ID</Label>
-              <Input placeholder="CVE-2025-XXXX" value={cveVal} onChange={e => setCveVal(e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label>Rejection Reason</Label>
-              <Input placeholder="Out of scope…" value={rejectVal} onChange={e => setRejectVal(e.target.value)} />
+            <div className="flex justify-end">
+              <Button className="gradient-technieum" disabled={saving} onClick={patch}>
+                {saving ? 'Updating…' : 'Update Finding'}
+              </Button>
             </div>
           </div>
-          <div className="flex justify-end">
-            <Button className="gradient-technieum" disabled={saving} onClick={patch}>
-              {saving ? 'Updating…' : 'Update Finding'}
-            </Button>
-          </div>
-        </div>
+        )}
       </div>
     </DialogContent>
   );
@@ -606,8 +627,10 @@ function ResearcherModal({ entry, allFindings, onClose, onOpenFinding }: {
   onClose: () => void;
   onOpenFinding: (f: HofFinding) => void;
 }) {
-  const userFindings = allFindings.filter(f => f.user_id === entry.user_id);
-  const cves = userFindings.filter(f => f.cve_id);
+  const disclosureFindings = allFindings.filter(
+    f => f.user_id === entry.user_id && (f.status === 'accepted' || f.status === 'fixed')
+  );
+  const cveFindings = allFindings.filter(f => f.user_id === entry.user_id && !!f.cve_id);
 
   return (
     <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
@@ -618,35 +641,32 @@ function ResearcherModal({ entry, allFindings, onClose, onOpenFinding }: {
           </div>
           <div>
             <p className="font-bold">{entry.full_name ?? `@${entry.username}`}</p>
-            <p className="text-xs text-muted-foreground font-normal capitalize">
-              @{entry.username} · {entry.role}
-            </p>
+            <p className="text-xs text-muted-foreground font-normal">@{entry.username} · {entry.role}</p>
           </div>
         </DialogTitle>
       </DialogHeader>
 
       <div className="space-y-5 mt-2">
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-3 gap-3">
           {[
-            { label: 'Total Bounty', value: `$${Number(entry.total_bounty).toLocaleString()}`, color: 'text-green-400', bg: 'bg-green-500/10', border: 'border-green-500/20' },
-            { label: 'Findings', value: entry.finding_count, color: 'text-primary', bg: 'bg-primary/10', border: 'border-primary/20' },
-            { label: 'Accepted', value: entry.accepted_count, color: 'text-teal-400', bg: 'bg-teal-500/10', border: 'border-teal-500/20' },
-            { label: 'CVEs', value: entry.cve_count, color: 'text-purple-400', bg: 'bg-purple-500/10', border: 'border-purple-500/20' },
-          ].map(({ label, value, color, bg, border }) => (
+            { label: 'Points',      value: entry.total_points,    cls: 'text-primary',     border: 'border-primary/20',    bg: 'bg-primary/5' },
+            { label: 'Disclosures', value: entry.disclosure_count, cls: 'text-primary/80', border: 'border-primary/15',    bg: 'bg-primary/5' },
+            { label: 'CVEs',        value: entry.cve_count,        cls: 'text-red-400',    border: 'border-red-500/20',    bg: 'bg-red-500/5' },
+          ].map(({ label, value, cls, border, bg }) => (
             <div key={label} className={`rounded-lg border ${border} ${bg} p-3 text-center`}>
-              <p className={`text-xl font-bold ${color}`}>{value}</p>
+              <p className={`text-xl font-bold ${cls}`}>{value}</p>
               <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
             </div>
           ))}
         </div>
 
-        {cves.length > 0 && (
+        {cveFindings.length > 0 && (
           <div>
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">CVEs Assigned</p>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">CVEs</p>
             <div className="flex flex-wrap gap-2">
-              {cves.map(f => (
+              {cveFindings.map(f => (
                 <button key={f.id} onClick={() => { onClose(); onOpenFinding(f); }}
-                  className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border bg-purple-500/10 text-purple-400 border-purple-500/30 hover:bg-purple-500/20 transition-colors">
+                  className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border bg-primary/10 text-primary border-primary/20 hover:bg-primary/20 transition-colors">
                   {f.cve_id}
                 </button>
               ))}
@@ -656,22 +676,20 @@ function ResearcherModal({ entry, allFindings, onClose, onOpenFinding }: {
 
         <div>
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-            All Findings ({userFindings.length})
+            Disclosures ({disclosureFindings.length})
           </p>
-          {userFindings.length === 0 ? (
-            <p className="text-sm text-muted-foreground italic">No findings yet</p>
+          {disclosureFindings.length === 0 ? (
+            <p className="text-sm text-muted-foreground italic">No accepted disclosures yet</p>
           ) : (
             <div className="space-y-2">
-              {userFindings.map(f => (
+              {disclosureFindings.map(f => (
                 <button key={f.id} onClick={() => { onClose(); onOpenFinding(f); }}
                   className="w-full text-left p-3 rounded-lg border border-border/50 bg-secondary/20 hover:bg-secondary/40 hover:border-primary/30 transition-all group">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap mb-1">
-                        {getSeverityBadge(f.severity)}
-                        {getStatusBadge(f.status)}
-                        {f.cve_id && <span className="text-xs font-mono text-purple-400">{f.cve_id}</span>}
-                        {f.bounty_amount && <span className="text-xs text-green-400 font-semibold">${Number(f.bounty_amount).toLocaleString()}</span>}
+                        <SeverityBadge severity={f.severity} />
+                        {f.cve_id && <span className="text-xs font-mono text-primary/70">{f.cve_id}</span>}
                       </div>
                       <p className="text-sm font-medium truncate group-hover:text-primary transition-colors">{f.title}</p>
                       {f.program_name && <p className="text-xs text-muted-foreground mt-0.5">{f.program_name}</p>}
@@ -691,45 +709,48 @@ function ResearcherModal({ entry, allFindings, onClose, onOpenFinding }: {
 
 // ─── Finding Card ─────────────────────────────────────────────────────────────
 
-function FindingCard({ f, index, onDetail, onDelete }: {
+function FindingCard({ f, index, onDetail, onDelete, isAdmin }: {
   f: HofFinding; index: number;
   onDetail: (f: HofFinding) => void;
   onDelete: (id: number) => void;
+  isAdmin: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <Card className="animate-fade-in overflow-hidden" style={{ animationDelay: `${index * 30}ms` }}>
+    <Card className="overflow-hidden transition-all hover:border-primary/20" style={{ animationDelay: `${index * 30}ms` }}>
       <div className="p-4 cursor-pointer" onClick={() => setExpanded(p => !p)}>
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap mb-2">
-              {getSeverityBadge(f.severity)}
-              {getStatusBadge(f.status)}
+              <SeverityBadge severity={f.severity} />
+              <StatusBadge status={f.status} />
               {f.cve_id && (
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border bg-purple-500/10 text-purple-500 border-purple-500/30">
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border bg-primary/10 text-primary border-primary/20">
                   {f.cve_id}
                 </span>
               )}
-              {f.bounty_amount && (
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border bg-green-500/10 text-green-500 border-green-500/30">
-                  ${Number(f.bounty_amount).toLocaleString()}
+              {f.category && <Badge variant="secondary" className="text-xs">{f.category}</Badge>}
+              {f.blog_url && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border bg-primary/5 text-primary/60 border-primary/10">
+                  <BookOpen className="h-2.5 w-2.5" />Write-up
                 </span>
               )}
-              {f.category && <Badge variant="secondary" className="text-xs">{f.category}</Badge>}
             </div>
-            <h3 className="font-semibold">{f.title}</h3>
+            <h3 className="font-semibold text-sm">{f.title}</h3>
             {f.description && (
               <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{f.description}</p>
             )}
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <Button variant="ghost" size="icon" onClick={e => { e.stopPropagation(); onDelete(f.id); }}>
-              <Trash2 className="h-4 w-4 text-destructive" />
-            </Button>
+          <div className="flex items-center gap-1 shrink-0">
+            {isAdmin && (
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={e => { e.stopPropagation(); onDelete(f.id); }}>
+                <Trash2 className="h-3.5 w-3.5 text-destructive" />
+              </Button>
+            )}
             {expanded
-              ? <ChevronUp className="h-5 w-5 text-muted-foreground" />
-              : <ChevronDown className="h-5 w-5 text-muted-foreground" />
+              ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
+              : <ChevronDown className="h-4 w-4 text-muted-foreground" />
             }
           </div>
         </div>
@@ -745,42 +766,47 @@ function FindingCard({ f, index, onDetail, onDelete }: {
       </div>
 
       {expanded && (
-        <div className="px-4 pb-4 pt-2 border-t border-border/50 space-y-4 animate-fade-in">
+        <div className="px-4 pb-4 pt-2 border-t border-border/50 space-y-4">
           {f.impact && (
             <div>
-              <h4 className="text-sm font-semibold text-primary mb-2">Impact</h4>
+              <h4 className="text-xs font-semibold text-primary uppercase tracking-wider mb-2">Impact</h4>
               <p className="text-sm text-muted-foreground">{f.impact}</p>
             </div>
           )}
           {f.steps_to_reproduce && (
             <div>
-              <h4 className="text-sm font-semibold text-primary mb-2">Steps to Reproduce</h4>
-              <pre className="text-sm text-muted-foreground whitespace-pre-wrap font-mono bg-secondary/30 p-3 rounded-lg">
+              <h4 className="text-xs font-semibold text-primary uppercase tracking-wider mb-2">Steps to Reproduce</h4>
+              <pre className="text-sm text-muted-foreground whitespace-pre-wrap font-mono bg-secondary/30 p-3 rounded-lg text-xs">
                 {f.steps_to_reproduce}
               </pre>
             </div>
           )}
+
+          {/* Write-up preview */}
+          {f.blog_url && (
+            <div>
+              <h4 className="text-xs font-semibold text-primary uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <BookOpen className="h-3 w-3" />Write-up
+              </h4>
+              <div className="rounded-lg border border-border/40 bg-secondary/10 p-4 max-h-[300px] overflow-y-auto">
+                <BlogReader html={f.blog_url} />
+              </div>
+            </div>
+          )}
+
           {f.rejection_reason && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
-              <h4 className="text-sm font-semibold text-red-500 mb-1">Rejection Reason</h4>
+            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
+              <h4 className="text-xs font-semibold text-red-400 uppercase tracking-wider mb-1">Rejection Reason</h4>
               <p className="text-sm text-muted-foreground">{f.rejection_reason}</p>
             </div>
           )}
-          {f.public_url && (
-            <div>
-              <h4 className="text-sm font-semibold text-primary mb-1">Public Disclosure</h4>
-              <a href={f.public_url} target="_blank" rel="noreferrer"
-                className="text-sm text-primary hover:underline flex items-center gap-1">
-                <ExternalLink className="h-3 w-3" />{f.public_url}
-              </a>
-            </div>
-          )}
-          <div className="flex items-center justify-between pt-2 border-t border-border/50">
+
+          <div className="flex items-center justify-between pt-2 border-t border-border/30">
             <span className="text-xs text-muted-foreground">
               Reported: {fmtDate(f.reported_at || f.created_at)}
             </span>
             <Button variant="outline" size="sm" onClick={e => { e.stopPropagation(); onDetail(f); }}>
-              View Full Details & Update
+              View Details{isAdmin ? ' & Update' : ''}
             </Button>
           </div>
         </div>
@@ -793,28 +819,24 @@ function FindingCard({ f, index, onDetail, onDelete }: {
 
 export default function HallofFame() {
   const { token, user } = useAuth();
+  const isAdmin = user?.role === 'admin';
 
-  type TabType = 'all' | 'accepted' | 'cves' | 'rejected' | 'leaderboard';
-  const [tab, setTab] = useState<TabType>('all');
-  const [findings, setFindings] = useState<HofFinding[]>([]);
-  const [users, setUsers] = useState<AppUser[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
+  type TabType = 'all' | 'disclosure' | 'cves' | 'leaderboard';
+  const [tab, setTab]               = useState<TabType>(isAdmin ? 'all' : 'disclosure');
+  const [findings, setFindings]     = useState<HofFinding[]>([]);
+  const [users, setUsers]           = useState<AppUser[]>([]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
-  const [stats, setStats] = useState<Stats | null>(null);
-
-  const [search, setSearch] = useState('');
-  const [filterSev, setFilterSev] = useState('all');
-  const [filterProject, setFilterProject] = useState('all');
-
-  const [showAdd, setShowAdd] = useState(false);
+  const [stats, setStats]           = useState<Stats | null>(null);
+  const [search, setSearch]         = useState('');
+  const [showAdd, setShowAdd]       = useState(false);
   const [detailFinding, setDetailFinding] = useState<HofFinding | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [profileEntry, setProfileEntry] = useState<LeaderboardEntry | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading]       = useState(true);
 
   const headers = {
     'Content-Type': 'application/json',
-    'Authorization': token ? `Bearer ${token}` : '',
+    Authorization: token ? `Bearer ${token}` : '',
   };
 
   const loadAll = useCallback(async () => {
@@ -822,25 +844,19 @@ export default function HallofFame() {
     try {
       const params = new URLSearchParams();
       if (search) params.set('search', search);
-      if (filterSev !== 'all') params.set('severity', filterSev);
-      if (filterProject !== 'all') params.set('project_id', filterProject);
-
-      const [fRes, uRes, pRes, sRes, lRes] = await Promise.all([
+      const [fRes, uRes, sRes, lRes] = await Promise.all([
         fetch(`${HOF_API}/findings?${params}`, { headers }),
         fetch(`${API}/users`, { headers }),
-        fetch(`${HOF_API}/projects`, { headers }),
         fetch(`${HOF_API}/stats`, { headers }),
         fetch(`${HOF_API}/leaderboard`, { headers }),
       ]);
-
       if (fRes.ok) setFindings(await fRes.json());
       if (uRes.ok) setUsers(await uRes.json());
-      if (pRes.ok) setProjects(await pRes.json());
       if (sRes.ok) setStats(await sRes.json());
       if (lRes.ok) setLeaderboard(await lRes.json());
-    } catch { toast.error('Failed to load Hall of Fame data.'); }
+    } catch { toast.error('Failed to load data.'); }
     finally { setLoading(false); }
-  }, [search, filterSev, filterProject, token]);
+  }, [search, token]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -861,219 +877,194 @@ export default function HallofFame() {
     } catch { toast.error('Failed to delete.'); }
   };
 
-  const tabFindings: Record<TabType, HofFinding[]> = {
-    all: findings.filter(f => f.status !== 'rejected' && f.status !== 'duplicate'),
-    accepted: findings.filter(f => f.status === 'accepted' || f.status === 'fixed'),
-    cves: findings.filter(f => !!f.cve_id),
-    rejected: findings.filter(f => f.status === 'rejected' || f.status === 'duplicate'),
-    leaderboard: [],
+  const allFindings        = findings.filter(f => f.status !== 'rejected' && f.status !== 'duplicate');
+  const disclosureFindings = findings.filter(f => f.status === 'accepted' || f.status === 'fixed');
+  const cveFindings        = findings.filter(f => !!f.cve_id);
+
+  const tabFindings: Record<string, HofFinding[]> = {
+    all: allFindings, disclosure: disclosureFindings, cves: cveFindings,
   };
 
   const medals = ['🥇', '🥈', '🥉'];
 
   const tabs: { key: TabType; label: string; icon: React.ReactNode; count?: number }[] = [
-    { key: 'all', label: 'All Findings', icon: <Bug className="h-3.5 w-3.5" />, count: tabFindings.all.length },
-    { key: 'accepted', label: 'Accepted', icon: <ShieldCheck className="h-3.5 w-3.5" />, count: tabFindings.accepted.length },
-    { key: 'cves', label: 'CVEs', icon: <Star className="h-3.5 w-3.5" />, count: tabFindings.cves.length },
-    { key: 'rejected', label: 'Rejected', icon: <X className="h-3.5 w-3.5" />, count: tabFindings.rejected.length },
+    ...(isAdmin ? [{ key: 'all' as TabType, label: 'All Findings', icon: <Bug className="h-3.5 w-3.5" />, count: allFindings.length }] : []),
+    { key: 'disclosure', label: 'Disclosure', icon: <ShieldCheck className="h-3.5 w-3.5" />, count: disclosureFindings.length },
+    { key: 'cves',       label: 'CVEs',       icon: <Star className="h-3.5 w-3.5" />,       count: cveFindings.length },
     { key: 'leaderboard', label: 'Leaderboard', icon: <Trophy className="h-3.5 w-3.5" /> },
   ];
 
+  // Stat cards config
+  const statCards = stats ? [
+    { label: 'Disclosures',   value: stats.disclosure_count, cls: 'text-primary',   border: 'border-primary/20',  bg: 'bg-primary/5' },
+    { label: 'CVEs Assigned', value: stats.cve_count,        cls: 'text-red-400',   border: 'border-red-500/20',  bg: 'bg-red-500/5' },
+    { label: 'Critical/High', value: stats.critical_high,    cls: 'text-red-400',   border: 'border-red-500/20',  bg: 'bg-red-500/5' },
+    // { label: 'Projects',      value: stats.program_count,    cls: 'text-primary/70',border: 'border-primary/15',  bg: 'bg-primary/5' },
+    { label: 'Researchers',   value: stats.researcher_count, cls: 'text-primary/60',border: 'border-border/60',   bg: 'bg-secondary/30' },
+  ] : [];
+
   return (
     <DashboardLayout
-      title="Hall of Fame"
+      title="Wall of Fame"
       description="Bug bounty & vulnerability hall of fame — every find, every researcher, every reward."
     >
       <div className="space-y-6">
 
-        {/* ── Stats Cards ── */}
+        {/* Stats */}
         {stats && (
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-            {[
-              { label: 'Total Bounty', value: `$${Number(stats.total_bounty).toLocaleString()}`, sev: 'high' },
-              { label: 'Accepted', value: stats.accepted, sev: 'low' },
-              { label: 'CVEs Assigned', value: stats.cve_count, sev: 'critical' },
-              { label: 'Critical / High', value: stats.critical_high, sev: 'critical' },
-              { label: 'Projects', value: stats.program_count, sev: 'medium' },
-              { label: 'Researchers', value: stats.researcher_count, sev: 'informational' },
-            ].map(({ label, value, sev }) => {
-              const style = SEVERITY_STYLES[sev];
-              return (
-                <Card key={label} className={`p-4 border ${style.border} ${style.bg}`}>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className={`text-2xl font-bold ${style.text}`}>{value}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
-                    </div>
-                    <AlertTriangle className={`h-5 w-5 ${style.text}`} />
-                  </div>
-                </Card>
-              );
-            })}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {statCards.map(({ label, value, cls, border, bg }) => (
+              <Card key={label} className={`p-4 border ${border} ${bg}`}>
+                <p className={`text-2xl font-bold ${cls}`}>{value}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
+              </Card>
+            ))}
           </div>
         )}
 
-        {/* ── Filters + Add ── */}
-        <div className="flex flex-col sm:flex-row gap-3">
+        {/* Search + New Finding */}
+        <div className="flex gap-3">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Search findings, researchers…" value={search}
-              onChange={e => setSearch(e.target.value)} className="pl-10 bg-secondary/50" />
+            <Input
+              placeholder="Search findings, researchers…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="pl-10 bg-secondary/50"
+            />
           </div>
-          <Select value={filterSev} onValueChange={setFilterSev}>
-            <SelectTrigger className="w-full sm:w-40 bg-secondary/50">
-              <Filter className="h-4 w-4 mr-2" /><SelectValue placeholder="Severity" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Severities</SelectItem>
-              {['critical', 'high', 'medium', 'low', 'informational'].map(s => (
-                <SelectItem key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={filterProject} onValueChange={setFilterProject}>
-            <SelectTrigger className="w-full sm:w-44 bg-secondary/50">
-              <SelectValue placeholder="All Projects" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Projects</SelectItem>
-              {projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
           <Dialog open={showAdd} onOpenChange={setShowAdd}>
-            <Button className="gradient-technieum" onClick={() => setShowAdd(true)}>
+            <Button className="gradient-technieum shrink-0" onClick={() => setShowAdd(true)}>
               <Plus className="h-4 w-4 mr-2" />New Finding
             </Button>
             {showAdd && (
               <AddFindingModal
-                users={users} projects={projects}
+                users={users}
                 onClose={() => setShowAdd(false)}
-                onSaved={loadAll} token={token ?? ''}
+                onSaved={loadAll}
+                token={token ?? ''}
               />
             )}
           </Dialog>
         </div>
 
-        {/* ── Tabs ── */}
+        {/* Tabs */}
         <div className="flex gap-1 p-1 bg-secondary/40 rounded-lg w-fit flex-wrap">
           {tabs.map(({ key, label, icon, count }) => (
             <button key={key} onClick={() => setTab(key)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${tab === key
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-                }`}>
-              {icon}
-              {label}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                tab === key ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+              }`}>
+              {icon}{label}
               {count !== undefined && count > 0 && (
-                <span className={`ml-1 text-xs px-1.5 py-0.5 rounded-full font-semibold ${tab === key ? 'bg-primary/10 text-primary' : 'bg-secondary text-muted-foreground'
-                  }`}>{count}</span>
+                <span className={`ml-1 text-xs px-1.5 py-0.5 rounded-full font-semibold ${
+                  tab === key ? 'bg-primary/10 text-primary' : 'bg-secondary text-muted-foreground'
+                }`}>{count}</span>
               )}
             </button>
           ))}
         </div>
 
-        {/* ── Leaderboard ── */}
+        {/* Leaderboard */}
         {tab === 'leaderboard' && (
           <div className="space-y-3">
+            <div className="flex gap-4 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-primary inline-block" />Disclosure = 10 pts</span>
+              <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-400 inline-block" />CVE = 50 pts</span>
+            </div>
             {loading ? (
-              <Card className="p-12 text-center"><p className="text-sm text-muted-foreground">Loading leaderboard…</p></Card>
+              <Card className="p-12 text-center"><p className="text-sm text-muted-foreground">Loading…</p></Card>
             ) : leaderboard.length === 0 ? (
               <Card className="p-12 text-center">
                 <Trophy className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
                 <p className="text-lg font-medium">No researchers yet</p>
-                <p className="text-sm text-muted-foreground mt-1">Add findings to populate the leaderboard.</p>
               </Card>
-            ) : leaderboard.map((r, i) => {
-              const maxB = leaderboard[0]?.total_bounty ?? 1;
-              const pct = maxB > 0 ? (r.total_bounty / maxB) * 100 : 0;
-              return (
-                <Card key={r.user_id}
-                  className="p-4 cursor-pointer hover:border-primary/30 transition-colors group"
-                  onClick={() => setProfileEntry(r)}>
-                  <div className="flex items-center gap-4">
-                    <span className="text-xl font-bold min-w-[32px] text-muted-foreground">
-                      {medals[i] ?? `#${i + 1}`}
-                    </span>
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${avatarColor(r.username)}`}>
-                      {initials(r.username)}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-semibold group-hover:text-primary transition-colors">
-                          {r.full_name ?? `@${r.username}`}
-                        </p>
-                        <span className="text-xs text-muted-foreground">@{r.username}</span>
-                        <Badge variant="secondary" className="text-xs capitalize">{r.role}</Badge>
+            ) : (
+              <div className="rounded-lg border border-border/50 overflow-hidden">
+                <div className="grid grid-cols-[2rem_1fr_7rem_7rem_6rem] gap-4 px-4 py-2.5 bg-secondary/40 border-b border-border/50">
+                  <span className="text-xs font-semibold text-muted-foreground">#</span>
+                  <span className="text-xs font-semibold text-muted-foreground">Researcher</span>
+                  <span className="text-xs font-semibold text-muted-foreground text-center">Disclosures</span>
+                  <span className="text-xs font-semibold text-muted-foreground text-center">CVEs</span>
+                  <span className="text-xs font-semibold text-muted-foreground text-right">Points</span>
+                </div>
+                {leaderboard.map((r, i) => (
+                  <div key={r.user_id}
+                    className="grid grid-cols-[2rem_1fr_7rem_7rem_6rem] gap-4 px-4 py-3 border-b border-border/20 last:border-0 cursor-pointer hover:bg-secondary/20 transition-colors items-center"
+                    onClick={() => setProfileEntry(r)}>
+                    <span className="text-sm font-bold text-muted-foreground">{medals[i] ?? `#${i + 1}`}</span>
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${avatarColor(r.username)}`}>
+                        {initials(r.username)}
                       </div>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {r.finding_count} findings · {r.accepted_count} accepted · {r.cve_count} CVEs
-                      </p>
-                      <div className="mt-2 h-1.5 bg-secondary rounded-full overflow-hidden w-full max-w-xs">
-                        <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold truncate">{r.full_name ?? `@${r.username}`}</p>
+                        <p className="text-xs text-muted-foreground">@{r.username}</p>
                       </div>
+                      <Badge variant="secondary" className="text-xs capitalize hidden sm:flex flex-shrink-0">{r.role}</Badge>
                     </div>
-                    <div className="text-right flex-shrink-0">
-                      <p className="text-lg font-bold text-primary">${Number(r.total_bounty).toLocaleString()}</p>
-                      <p className="text-xs text-muted-foreground">total bounty</p>
-                      <p className="text-xs text-primary/60 group-hover:text-primary transition-colors mt-1">Click to view →</p>
+                    <div className="text-center">
+                      <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
+                        {r.disclosure_count}
+                      </span>
+                    </div>
+                    <div className="text-center">
+                      <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-red-500/10 text-red-400 border border-red-500/20">
+                        {r.cve_count}
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-bold text-primary">{r.total_points}</p>
+                      <p className="text-[10px] text-muted-foreground">pts</p>
                     </div>
                   </div>
-                </Card>
-              );
-            })}
+                ))}
+              </div>
+            )}
           </div>
         )}
 
-        {/* ── Findings list ── */}
+        {/* Findings list */}
         {tab !== 'leaderboard' && (
           <div className="space-y-3">
             {loading ? (
               <Card className="p-12 text-center"><p className="text-sm text-muted-foreground">Loading findings…</p></Card>
             ) : tabFindings[tab].length === 0 ? (
               <Card className="p-12 text-center">
-                <AlertTriangle className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                <ShieldCheck className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
                 <p className="text-lg font-medium">
-                  {tab === 'accepted' ? 'No accepted findings yet'
-                    : tab === 'cves' ? 'No CVEs assigned yet'
-                      : tab === 'rejected' ? 'No rejected or duplicate findings'
-                        : 'No findings found'}
+                  {tab === 'disclosure' ? 'No disclosures yet' : tab === 'cves' ? 'No CVEs yet' : 'No findings found'}
                 </p>
                 <p className="text-sm text-muted-foreground mt-1">
                   {tab === 'all' ? 'Add your first finding to get started.' : 'Findings will appear here once added.'}
                 </p>
               </Card>
             ) : tabFindings[tab].map((f, index) => (
-              <FindingCard
-                key={f.id} f={f} index={index}
-                onDetail={openDetail}
-                onDelete={id => setDeletingId(id)}
-              />
+              <FindingCard key={f.id} f={f} index={index}
+                onDetail={openDetail} onDelete={id => setDeletingId(id)} isAdmin={isAdmin} />
             ))}
           </div>
         )}
       </div>
 
-      {/* ── Detail Dialog ── */}
+      {/* Detail dialog */}
       <Dialog open={!!detailFinding} onOpenChange={open => !open && setDetailFinding(null)}>
         {detailFinding && (
           <DetailModal finding={detailFinding} onClose={() => setDetailFinding(null)}
-            onUpdate={loadAll} token={token ?? ''} />
+            onUpdate={loadAll} token={token ?? ''} isAdmin={isAdmin} />
         )}
       </Dialog>
 
-      {/* ── Researcher Profile Dialog ── */}
+      {/* Researcher profile dialog */}
       <Dialog open={!!profileEntry} onOpenChange={open => !open && setProfileEntry(null)}>
         {profileEntry && (
-          <ResearcherModal
-            entry={profileEntry}
-            allFindings={findings}
+          <ResearcherModal entry={profileEntry} allFindings={findings}
             onClose={() => setProfileEntry(null)}
-            onOpenFinding={f => { setProfileEntry(null); setTimeout(() => openDetail(f), 100); }}
-          />
+            onOpenFinding={f => { setProfileEntry(null); setTimeout(() => openDetail(f), 100); }} />
         )}
       </Dialog>
 
-      {/* ── Delete Confirm ── */}
+      {/* Delete confirm */}
       <Dialog open={!!deletingId} onOpenChange={open => !open && setDeletingId(null)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>

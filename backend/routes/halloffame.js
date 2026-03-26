@@ -3,10 +3,47 @@ const router = express.Router();
 const db = require('../db');
 
 // ─────────────────────────────────────────────
-// PROJECTS (replaces programs)
+// AUTO-MIGRATE: ensure schema is up to date
+// Runs once when the route module is loaded.
+// Safe to run repeatedly — checks before altering.
 // ─────────────────────────────────────────────
 
-// GET /api/wof/projects — for dropdowns
+(async () => {
+  try {
+    const [[{ dbname }]] = await db.query('SELECT DATABASE() AS dbname');
+
+    // Drop bounty_amount if it still exists
+    const [[{ bountyExists }]] = await db.query(`
+      SELECT COUNT(*) AS bountyExists
+      FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'halloffamefindings' AND COLUMN_NAME = 'bounty_amount'
+    `, [dbname]);
+    if (bountyExists > 0) {
+      await db.query('ALTER TABLE halloffamefindings DROP COLUMN bounty_amount');
+      console.log('✅ HoF migration: dropped bounty_amount');
+    }
+
+    // Add blog_url if it doesn't exist yet
+    const [[{ blogExists }]] = await db.query(`
+      SELECT COUNT(*) AS blogExists
+      FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'halloffamefindings' AND COLUMN_NAME = 'blog_url'
+    `, [dbname]);
+    if (blogExists === 0) {
+      await db.query('ALTER TABLE halloffamefindings ADD COLUMN blog_url TEXT DEFAULT NULL AFTER public_url');
+      console.log('✅ HoF migration: added blog_url');
+    }
+
+    console.log('✅ HoF schema verified');
+  } catch (err) {
+    console.error('⚠️  HoF auto-migration error (non-fatal):', err.message);
+  }
+})();
+
+// ─────────────────────────────────────────────
+// PROJECTS (for dropdowns)
+// ─────────────────────────────────────────────
+
 router.get('/projects', async (req, res) => {
   try {
     const [rows] = await db.query(
@@ -23,13 +60,11 @@ router.get('/projects', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
-// LEADERBOARD (built from users + halloffamefindings.user_id)
+// LEADERBOARD
+// Points: Disclosure (accepted/fixed) = 10pts, CVE = 50pts
 // ─────────────────────────────────────────────
 
-// GET /api/wof/leaderboard
 router.get('/leaderboard', async (req, res) => {
-  const { sort = 'bounty' } = req.query;
-  const orderCol = sort === 'cve' ? 'cve_count' : sort === 'findings' ? 'finding_count' : 'total_bounty';
   try {
     const [rows] = await db.query(
       `SELECT
@@ -37,15 +72,19 @@ router.get('/leaderboard', async (req, res) => {
          u.name        AS username,
          u.full_name,
          u.role,
-         COALESCE(SUM(CASE WHEN f.status = 'accepted' THEN f.bounty_amount ELSE 0 END), 0) AS total_bounty,
          COUNT(f.id)                                                                         AS finding_count,
-         SUM(CASE WHEN f.status IN ('accepted','fixed') THEN 1 ELSE 0 END)                  AS accepted_count,
-         SUM(CASE WHEN f.cve_id IS NOT NULL AND f.cve_id != '' THEN 1 ELSE 0 END)           AS cve_count
+         COALESCE(SUM(CASE WHEN f.status IN ('accepted','fixed') THEN 1 ELSE 0 END), 0)     AS disclosure_count,
+         COALESCE(SUM(CASE WHEN f.cve_id IS NOT NULL AND f.cve_id != '' THEN 1 ELSE 0 END), 0) AS cve_count,
+         COALESCE(
+           SUM(CASE WHEN f.status IN ('accepted','fixed') THEN 10 ELSE 0 END) +
+           SUM(CASE WHEN f.cve_id IS NOT NULL AND f.cve_id != '' THEN 50 ELSE 0 END),
+           0
+         ) AS total_points
        FROM users u
        LEFT JOIN halloffamefindings f ON f.user_id = u.id
-       WHERE u.role IN ('admin', 'tester', 'manager')  -- Show all users who can submit findings
+       WHERE u.role IN ('admin', 'tester', 'manager')
        GROUP BY u.id, u.name, u.full_name, u.role
-       ORDER BY ${orderCol} DESC`
+       ORDER BY total_points DESC`
     );
     res.json(rows);
   } catch (err) {
@@ -58,7 +97,6 @@ router.get('/leaderboard', async (req, res) => {
 // FINDINGS
 // ─────────────────────────────────────────────
 
-// GET /api/wof/findings
 router.get('/findings', async (req, res) => {
   const { severity, status, project_id, user_id, search } = req.query;
 
@@ -74,11 +112,11 @@ router.get('/findings', async (req, res) => {
       f.severity,
       f.category,
       f.status,
-      f.bounty_amount,
       f.cve_id,
       f.reported_at,
       f.resolved_at,
       f.public_url,
+      COALESCE(f.blog_url, NULL) AS blog_url,
       f.rejection_reason,
       f.notes,
       f.created_at,
@@ -151,11 +189,10 @@ router.post('/findings', async (req, res) => {
   const {
     user_id, project_id, title, description,
     steps_to_reproduce, impact, severity, category,
-    status = 'submitted', bounty_amount, cve_id,
-    reported_at, public_url, rejection_reason, notes
+    status = 'submitted', cve_id,
+    reported_at, public_url, blog_url, rejection_reason, notes
   } = req.body;
 
-  // Validate required fields
   if (!user_id || !title) {
     return res.status(400).json({ error: 'user_id and title are required' });
   }
@@ -164,19 +201,18 @@ router.post('/findings', async (req, res) => {
     const [result] = await db.query(
       `INSERT INTO halloffamefindings
         (user_id, project_id, title, description, steps_to_reproduce,
-         impact, severity, category, status, bounty_amount, cve_id,
-         reported_at, public_url, rejection_reason, notes)
+         impact, severity, category, status, cve_id,
+         reported_at, public_url, blog_url, rejection_reason, notes)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         user_id, project_id || null, title, description || null,
         steps_to_reproduce || null, impact || null, severity, category || null,
-        status, bounty_amount || null, cve_id || null,
-        reported_at || null, public_url || null,
+        status, cve_id || null,
+        reported_at || null, public_url || null, blog_url || null,
         rejection_reason || null, notes || null
       ]
     );
 
-    // Auto timeline event
     await db.query(
       'INSERT INTO halloffamefinding_timeline (finding_id, event, event_date, actor) VALUES (?, ?, NOW(), ?)',
       [result.insertId, 'Finding submitted', 'system']
@@ -193,35 +229,35 @@ router.post('/findings', async (req, res) => {
 router.patch('/findings/:id', async (req, res) => {
   const { id } = req.params;
   const {
-    status, bounty_amount, cve_id, rejection_reason,
+    status, cve_id, rejection_reason,
     resolved_at, notes, severity, title, description,
-    steps_to_reproduce, impact, category, public_url
+    steps_to_reproduce, impact, category, public_url, blog_url
   } = req.body;
 
   try {
     const fields = [];
     const vals   = [];
 
-    const add = (col, val) => { 
+    const add = (col, val) => {
       if (val !== undefined && val !== null) {
-        fields.push(`${col}=?`); 
+        fields.push(`${col}=?`);
         vals.push(val);
       }
     };
 
-    if (status !== undefined)            add('status', status);
-    if (bounty_amount !== undefined)     add('bounty_amount', bounty_amount);
-    if (cve_id !== undefined)            add('cve_id', cve_id);
-    if (rejection_reason !== undefined)  add('rejection_reason', rejection_reason);
-    if (resolved_at !== undefined)       add('resolved_at', resolved_at);
-    if (notes !== undefined)             add('notes', notes);
-    if (severity !== undefined)          add('severity', severity);
-    if (title !== undefined)             add('title', title);
-    if (description !== undefined)       add('description', description);
+    if (status !== undefined)             add('status', status);
+    if (cve_id !== undefined)             add('cve_id', cve_id);
+    if (rejection_reason !== undefined)   add('rejection_reason', rejection_reason);
+    if (resolved_at !== undefined)        add('resolved_at', resolved_at);
+    if (notes !== undefined)              add('notes', notes);
+    if (severity !== undefined)           add('severity', severity);
+    if (title !== undefined)              add('title', title);
+    if (description !== undefined)        add('description', description);
     if (steps_to_reproduce !== undefined) add('steps_to_reproduce', steps_to_reproduce);
-    if (impact !== undefined)            add('impact', impact);
-    if (category !== undefined)          add('category', category);
-    if (public_url !== undefined)        add('public_url', public_url);
+    if (impact !== undefined)             add('impact', impact);
+    if (category !== undefined)           add('category', category);
+    if (public_url !== undefined)         add('public_url', public_url);
+    if (blog_url !== undefined)           add('blog_url', blog_url);
 
     if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
 
@@ -252,11 +288,11 @@ router.delete('/findings/:id', async (req, res) => {
 router.post('/findings/:id/timeline', async (req, res) => {
   const { id } = req.params;
   const { event, actor } = req.body;
-  
+
   if (!event) {
     return res.status(400).json({ error: 'Event is required' });
   }
-  
+
   try {
     const [result] = await db.query(
       'INSERT INTO halloffamefinding_timeline (finding_id, event, event_date, actor) VALUES (?, ?, NOW(), ?)',
@@ -273,20 +309,18 @@ router.post('/findings/:id/timeline', async (req, res) => {
 // STATS
 // ─────────────────────────────────────────────
 
-// GET /api/wof/stats
 router.get('/stats', async (req, res) => {
   try {
     const [[totals]] = await db.query(`
       SELECT
         COUNT(*)                                                                   AS total_findings,
-        SUM(CASE WHEN status='accepted' THEN 1 ELSE 0 END)                        AS accepted,
-        SUM(CASE WHEN status='rejected' THEN 1 ELSE 0 END)                        AS rejected,
-        SUM(CASE WHEN status='duplicate' THEN 1 ELSE 0 END)                       AS duplicate,
-        SUM(CASE WHEN status='submitted' THEN 1 ELSE 0 END)                       AS submitted,
-        SUM(CASE WHEN status='triaged'  THEN 1 ELSE 0 END)                        AS triaged,
-        SUM(CASE WHEN cve_id IS NOT NULL AND cve_id != '' THEN 1 ELSE 0 END)      AS cve_count,
-        SUM(CASE WHEN severity IN ('critical','high') THEN 1 ELSE 0 END)          AS critical_high,
-        COALESCE(SUM(CASE WHEN status='accepted' THEN bounty_amount ELSE 0 END), 0) AS total_bounty,
+        COALESCE(SUM(CASE WHEN status IN ('accepted','fixed') THEN 1 ELSE 0 END), 0) AS disclosure_count,
+        COALESCE(SUM(CASE WHEN status='rejected' THEN 1 ELSE 0 END), 0)           AS rejected,
+        COALESCE(SUM(CASE WHEN status='duplicate' THEN 1 ELSE 0 END), 0)          AS duplicate,
+        COALESCE(SUM(CASE WHEN status='submitted' THEN 1 ELSE 0 END), 0)          AS submitted,
+        COALESCE(SUM(CASE WHEN status='triaged'  THEN 1 ELSE 0 END), 0)           AS triaged,
+        COALESCE(SUM(CASE WHEN cve_id IS NOT NULL AND cve_id != '' THEN 1 ELSE 0 END), 0) AS cve_count,
+        COALESCE(SUM(CASE WHEN severity IN ('critical','high') THEN 1 ELSE 0 END), 0)     AS critical_high,
         COUNT(DISTINCT project_id)                                                 AS program_count,
         (SELECT COUNT(*) FROM users WHERE role IN ('admin', 'tester', 'manager')) AS researcher_count
       FROM halloffamefindings
@@ -300,14 +334,9 @@ router.get('/stats', async (req, res) => {
       ORDER BY FIELD(severity, 'critical', 'high', 'medium', 'low', 'informational')
     `);
 
-    const acceptance_rate = totals.total_findings > 0
-      ? Math.round((totals.accepted / totals.total_findings) * 100)
-      : 0;
-
-    res.json({ 
-      ...totals, 
-      acceptance_rate, 
-      by_severity: bySeverity 
+    res.json({
+      ...totals,
+      by_severity: bySeverity
     });
   } catch (err) {
     console.error('Error fetching stats:', err);
@@ -319,8 +348,8 @@ router.get('/stats', async (req, res) => {
 router.get('/test', async (req, res) => {
   try {
     const [rows] = await db.query('SELECT COUNT(*) as count FROM halloffamefindings');
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       count: rows[0].count,
       message: 'Hall of Fame API is working'
     });

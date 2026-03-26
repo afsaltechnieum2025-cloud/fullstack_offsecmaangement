@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "@radix-ui/react-scroll-area": "^1.2.10",
+    "@radix-ui/react-tabs": "^1.1.13",
+    "docx": "^9.6.1"
+  }
+}

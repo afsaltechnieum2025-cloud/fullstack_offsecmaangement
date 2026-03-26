@@ -72,6 +72,7 @@ interface FindingPoc {
   file_name: string;
   uploaded_by: string;
   uploaded_at: string;
+  blob_data?: string; // For storing blob URLs
 }
 
 interface Project {
@@ -88,14 +89,13 @@ interface Assignee {
 
 // ─── API base URL ─────────────────────────────────────────────────────────────
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:5000/api';
-// Strip /api suffix to get the server root for static file serving
 const STATIC_BASE = API_BASE.replace(/\/api$/, '');
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function Findings() {
   const { user, role } = useAuth();
-  const userId = (user?.id ?? '') as string; // always a string — empty string when not logged in
+  const userId = (user?.id ?? '') as string;
 
   const [searchQuery, setSearchQuery] = useState('');
   const [severityFilter, setSeverityFilter] = useState<string>('all');
@@ -104,7 +104,6 @@ export default function Findings() {
 
   const [findings, setFindings] = useState<Finding[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
-  // Map: project_id → assignees (for username lookup)
   const [assigneeMap, setAssigneeMap] = useState<Record<string, Assignee[]>>({});
   const [pocs, setPocs] = useState<Record<string, FindingPoc[]>>({});
 
@@ -115,7 +114,6 @@ export default function Findings() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadingFindingId, setUploadingFindingId] = useState<string | null>(null);
 
-  // POC files staged in the Add Finding form before submit
   const formPocInputRef = useRef<HTMLInputElement>(null);
   const [pendingPocs, setPendingPocs] = useState<{ file: File; preview: string }[]>([]);
 
@@ -147,20 +145,27 @@ export default function Findings() {
     return token ? { Authorization: `Bearer ${token}` } : {};
   };
 
+  // ─── Helper to convert file to blob URL ─────────────────────────────────────
+  const fileToBlobUrl = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
   // ─── Data Fetching ────────────────────────────────────────────────────────────
 
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      // 1. Fetch all projects
       const projectsRes = await fetch(`${API_BASE}/projects`, {
         headers: authHeaders(),
       });
       const projectsData: Project[] = projectsRes.ok ? await projectsRes.json() : [];
       setProjects(projectsData);
 
-      // 2. Fetch all findings (backend should support no project_id filter for admin/manager)
-      //    If your backend requires project_id, fetch per project in parallel.
       let allFindings: Finding[] = [];
 
       if (projectsData.length > 0) {
@@ -172,7 +177,6 @@ export default function Findings() {
         allFindings = results.flat();
       }
 
-      // Sort by severity weight
       const severityOrder: Record<string, number> = {
         critical: 0, high: 1, medium: 2, low: 3, informational: 4,
       };
@@ -183,7 +187,6 @@ export default function Findings() {
       );
       setFindings(allFindings);
 
-      // 3. Fetch assignees for each project (for username lookup)
       if (projectsData.length > 0) {
         const assigneeFetches = projectsData.map(p =>
           fetch(`${API_BASE}/projects/${p.id}/assignments`, { headers: authHeaders() })
@@ -198,12 +201,27 @@ export default function Findings() {
         setAssigneeMap(map);
       }
 
-      // 4. Fetch POCs for each finding
       if (allFindings.length > 0) {
         const pocFetches = allFindings.map(f =>
           fetch(`${API_BASE}/findings/${f.id}/pocs`, { headers: authHeaders() })
             .then(r => r.ok ? r.json() : [])
-            .then((rows: FindingPoc[]) => ({ findingId: f.id, rows }))
+            .then(async (rows: FindingPoc[]) => {
+              // Convert each POC to blob URL
+              const enhancedRows = await Promise.all(
+                rows.map(async (poc) => {
+                  try {
+                    const response = await fetch(`${STATIC_BASE}${poc.file_path}`);
+                    const blob = await response.blob();
+                    const blobUrl = URL.createObjectURL(blob);
+                    return { ...poc, blob_data: blobUrl };
+                  } catch (error) {
+                    console.error('Error loading POC blob:', error);
+                    return poc;
+                  }
+                })
+              );
+              return { findingId: f.id, rows: enhancedRows };
+            })
         );
         const pocResults = await Promise.all(pocFetches);
         const pocMap: Record<string, FindingPoc[]> = {};
@@ -222,6 +240,16 @@ export default function Findings() {
 
   useEffect(() => {
     fetchData();
+    return () => {
+      // Cleanup blob URLs
+      Object.values(pocs).forEach(pocList => {
+        pocList.forEach(poc => {
+          if (poc.blob_data) {
+            URL.revokeObjectURL(poc.blob_data);
+          }
+        });
+      });
+    };
   }, []);
 
   // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -231,7 +259,7 @@ export default function Findings() {
       const match = assignees.find(a => a.user_id === uid);
       if (match) return match.username;
     }
-    return uid; // fallback to raw ID
+    return uid;
   };
 
   const getProjectName = (projectId: string) =>
@@ -250,7 +278,6 @@ export default function Findings() {
       cvssScore: '',
       cweId: '',
     });
-    // Revoke preview URLs to free memory
     pendingPocs.forEach(p => URL.revokeObjectURL(p.preview));
     setPendingPocs([]);
   };
@@ -262,24 +289,25 @@ export default function Findings() {
       medium: 'Medium',
       low: 'Low',
       informational: 'Informational',
-      info: 'Informational', // DB alias
+      info: 'Informational',
     };
     return map[s.toLowerCase()] ?? 'Informational';
   };
 
+  // Simplified color scheme - only primary and critical red
   const SEVERITY_STYLES: Record<Severity, { bg: string; text: string; border: string }> = {
-    Critical:      { bg: 'bg-red-500/10',    text: 'text-red-500',    border: 'border-red-500/30'    },
-    High:          { bg: 'bg-orange-500/10', text: 'text-orange-500', border: 'border-orange-500/30' },
-    Medium:        { bg: 'bg-yellow-500/10', text: 'text-yellow-500', border: 'border-yellow-500/30' },
-    Low:           { bg: 'bg-green-500/10',  text: 'text-green-500',  border: 'border-green-500/30'  },
-    Informational: { bg: 'bg-blue-500/10',   text: 'text-blue-500',   border: 'border-blue-500/30'   },
+    Critical: { bg: 'bg-red-500/10', text: 'text-red-600 dark:text-red-400', border: 'border-red-500/30' },
+    High: { bg: 'bg-primary/10', text: 'text-primary', border: 'border-primary/30' },
+    Medium: { bg: 'bg-primary/8', text: 'text-primary', border: 'border-primary/25' },
+    Low: { bg: 'bg-primary/5', text: 'text-primary', border: 'border-primary/20' },
+    Informational: { bg: 'bg-primary/3', text: 'text-primary/80', border: 'border-primary/15' },
   };
 
   const getSeverityBadge = (severity: string) => {
     const normalized = normalizeSeverity(severity);
     const { bg, text, border } = SEVERITY_STYLES[normalized];
     return (
-      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${bg} ${text} ${border}`}>
+      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${bg} ${text} ${border}`}>
         {normalized}
       </span>
     );
@@ -287,21 +315,23 @@ export default function Findings() {
 
   const getSeverityIcon = (severity: string) => {
     const normalized = normalizeSeverity(severity);
-    return <AlertTriangle className={`h-5 w-5 ${SEVERITY_STYLES[normalized].text}`} />;
+    return (
+      <AlertTriangle className={`h-5 w-5 ${normalized === 'Critical' ? 'text-red-500' : 'text-primary'}`} />
+    );
   };
 
   const getRetestBadge = (status: string | null) => {
     if (!status) return null;
-    const variants: Record<string, 'destructive' | 'secondary' | 'outline'> = {
-      Open: 'destructive',
-      Fixed: 'outline',
-      'Not Fixed': 'secondary',
+    const variants: Record<string, string> = {
+      Open: 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/30',
+      Fixed: 'bg-primary/10 text-primary border-primary/30',
+      'Not Fixed': 'bg-primary/8 text-primary border-primary/25',
     };
     return (
-      <Badge variant={variants[status] ?? 'secondary'} className="ml-2">
+      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${variants[status]}`}>
         <RefreshCw className="h-3 w-3 mr-1" />
         {status}
-      </Badge>
+      </span>
     );
   };
 
@@ -320,7 +350,6 @@ export default function Findings() {
     }
 
     try {
-      // 1. Create the finding
       const res = await fetch(`${API_BASE}/findings`, {
         method: 'POST',
         headers: authHeaders(),
@@ -342,14 +371,12 @@ export default function Findings() {
       if (!res.ok) {
         let errMsg = res.statusText;
         try { const err = await res.clone().json(); errMsg = err.message ?? errMsg; } catch (_) {}
-        console.error('POST findings failed:', res.status, errMsg);
         toast.error(`Failed to add finding (${res.status}): ${errMsg}`);
         return;
       }
 
       const newFinding: Finding = await res.json();
 
-      // 2. Upload any pending POCs
       const uploadedPocs: FindingPoc[] = [];
       if (pendingPocs.length > 0) {
         for (const { file } of pendingPocs) {
@@ -364,7 +391,9 @@ export default function Findings() {
             });
             if (pocRes.ok) {
               const poc: FindingPoc = await pocRes.json();
-              uploadedPocs.push(poc);
+              // Create blob URL for the new POC
+              const blobUrl = URL.createObjectURL(file);
+              uploadedPocs.push({ ...poc, blob_data: blobUrl });
             }
           } catch (_) { /* skip failed POC uploads silently */ }
         }
@@ -383,12 +412,15 @@ export default function Findings() {
 
   // ─── Stage POC files in the Add Finding form ──────────────────────────────────
 
-  const handleFormPocSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFormPocSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
     const allowed = ['image/jpeg', 'image/jpg', 'image/png'];
     const valid = files.filter(f => allowed.includes(f.type));
     if (valid.length !== files.length) toast.error('Only JPEG and PNG files are allowed');
-    const newPocs = valid.map(file => ({ file, preview: URL.createObjectURL(file) }));
+    
+    const newPocs = await Promise.all(
+      valid.map(async file => ({ file, preview: await fileToBlobUrl(file) }))
+    );
     setPendingPocs(prev => [...prev, ...newPocs]);
     if (formPocInputRef.current) formPocInputRef.current.value = '';
   };
@@ -423,6 +455,15 @@ export default function Findings() {
         toast.error('Failed to delete: ' + (err.message ?? res.statusText));
         return;
       }
+      
+      // Cleanup blob URLs for this finding
+      const findingPocs = pocs[deletingFindingId];
+      if (findingPocs) {
+        findingPocs.forEach(poc => {
+          if (poc.blob_data) URL.revokeObjectURL(poc.blob_data);
+        });
+      }
+      
       setFindings(prev => prev.filter(f => f.id !== deletingFindingId));
       toast.success('Finding deleted');
     } catch (error) {
@@ -453,7 +494,7 @@ export default function Findings() {
 
       const res = await fetch(`${API_BASE}/findings/${findingId}/pocs`, {
         method: 'POST',
-        headers: authHeadersNoContent(), // no Content-Type — let browser set multipart boundary
+        headers: authHeadersNoContent(),
         body: formPayload,
       });
 
@@ -464,9 +505,13 @@ export default function Findings() {
       }
 
       const newPoc: FindingPoc = await res.json();
+      // Create blob URL for the uploaded image
+      const blobUrl = URL.createObjectURL(file);
+      const enhancedPoc = { ...newPoc, blob_data: blobUrl };
+      
       setPocs(prev => ({
         ...prev,
-        [findingId]: [...(prev[findingId] || []), newPoc],
+        [findingId]: [...(prev[findingId] || []), enhancedPoc],
       }));
       toast.success('POC uploaded successfully!');
     } catch (error) {
@@ -495,6 +540,12 @@ export default function Findings() {
         toast.error('Failed to delete POC: ' + (err.message ?? res.statusText));
         return;
       }
+      
+      // Revoke blob URL if it exists
+      if (poc.blob_data) {
+        URL.revokeObjectURL(poc.blob_data);
+      }
+      
       setPocs(prev => ({
         ...prev,
         [poc.finding_id]: prev[poc.finding_id]?.filter(p => p.id !== poc.id) || [],
@@ -611,7 +662,7 @@ export default function Findings() {
 
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
-              <Button variant="default" className="gradient-technieum">
+              <Button variant="default" className="gradient-technieum shrink-0">
                 <Plus className="h-4 w-4 mr-2" />
                 Add Finding
               </Button>
@@ -801,7 +852,7 @@ export default function Findings() {
           </Dialog>
         </div>
 
-        {/* Stats */}
+        {/* Stats - Simplified with primary colors */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           {(['Critical', 'High', 'Medium', 'Low', 'Informational'] as Severity[]).map(severity => {
             const count = findings.filter(f =>
@@ -824,231 +875,234 @@ export default function Findings() {
 
         {/* Findings List */}
         <div className="space-y-3">
-          {filteredFindings.map((finding, index) => {
-            const isExpanded = expandedFinding === finding.id;
-            const canDelete = !!userId && finding.created_by === userId;
-            const findingPocs = pocs[finding.id] || [];
+          {filteredFindings.length === 0 ? (
+            <Card className="p-12 text-center">
+              <AlertTriangle className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+              <p className="text-lg font-medium">No findings found</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Click the "Add Finding" button to create your first finding
+              </p>
+            </Card>
+          ) : (
+            filteredFindings.map((finding, index) => {
+              const isExpanded = expandedFinding === finding.id;
+              const canDelete = !!userId && finding.created_by === userId;
+              const findingPocs = pocs[finding.id] || [];
 
-            return (
-              <Card
-                key={finding.id}
-                className="animate-fade-in overflow-hidden"
-                style={{ animationDelay: `${index * 30}ms` }}
-              >
-                <div
-                  className="p-4 cursor-pointer"
-                  onClick={() => setExpandedFinding(isExpanded ? null : finding.id)}
+              return (
+                <Card
+                  key={finding.id}
+                  className="animate-fade-in overflow-hidden"
+                  style={{ animationDelay: `${index * 30}ms` }}
                 >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex items-start gap-3 flex-1">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-3 flex-wrap">
-                          {getSeverityBadge(finding.severity)}
-                          {finding.cvss_score && (
-                            <span className="text-sm font-mono text-muted-foreground">
-                              CVSS {finding.cvss_score}
-                            </span>
-                          )}
-                          <Badge variant="secondary" className="text-xs hidden sm:inline-flex">
-                            {getProjectName(finding.project_id)}
-                          </Badge>
-                          <Badge variant="secondary" className="text-xs max-w-[120px] sm:hidden block">
-                            <span className="truncate block">{getProjectName(finding.project_id)}</span>
-                          </Badge>
-                          {findingPocs.length > 0 && (
-                            <Badge variant="outline" className="text-xs">
-                              <ImageIcon className="h-3 w-3 mr-1" />
-                              {findingPocs.length} POC{findingPocs.length > 1 ? 's' : ''}
+                  <div
+                    className="p-4 cursor-pointer"
+                    onClick={() => setExpandedFinding(isExpanded ? null : finding.id)}
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-start gap-3 flex-1">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-3 flex-wrap">
+                            {getSeverityBadge(finding.severity)}
+                            {finding.cvss_score && (
+                              <span className="text-sm font-mono text-muted-foreground">
+                                CVSS {finding.cvss_score}
+                              </span>
+                            )}
+                            <Badge variant="secondary" className="text-xs hidden sm:inline-flex">
+                              {getProjectName(finding.project_id)}
                             </Badge>
-                          )}
-                        </div>
-                        <h3 className="font-semibold mt-2">{finding.title}</h3>
-                        <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
-                          {finding.description}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Badge variant={finding.status === 'Open' ? 'destructive' : 'secondary'}>
-                        {finding.status}
-                      </Badge>
-                      {finding.retest_status && getRetestBadge(finding.retest_status)}
-                      {canDelete && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={(e) => { e.stopPropagation(); handleDelete(finding.id); }}
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      )}
-                      {isExpanded
-                        ? <ChevronUp className="h-5 w-5 text-muted-foreground" />
-                        : <ChevronDown className="h-5 w-5 text-muted-foreground" />
-                      }
-                    </div>
-                  </div>
-                </div>
-
-                {isExpanded && (
-                  <div className="px-4 pb-4 pt-2 border-t border-border/50 space-y-4 animate-fade-in">
-                    {finding.steps_to_reproduce && (
-                      <div>
-                        <h4 className="text-sm font-semibold text-primary mb-2">Steps to Reproduce</h4>
-                        <pre className="text-sm text-muted-foreground whitespace-pre-wrap font-mono bg-secondary/30 p-3 rounded-lg">
-                          {finding.steps_to_reproduce}
-                        </pre>
-                      </div>
-                    )}
-                    {finding.impact && (
-                      <div>
-                        <h4 className="text-sm font-semibold text-primary mb-2">Impact</h4>
-                        <p className="text-sm text-muted-foreground">{finding.impact}</p>
-                      </div>
-                    )}
-                    {finding.remediation && (
-                      <div>
-                        <h4 className="text-sm font-semibold text-primary mb-2">Remediation</h4>
-                        <pre className="text-sm text-muted-foreground whitespace-pre-wrap bg-secondary/30 p-3 rounded-lg">
-                          {finding.remediation}
-                        </pre>
-                      </div>
-                    )}
-                    {finding.affected_component && (
-                      <div>
-                        <h4 className="text-sm font-semibold text-primary mb-2">Affected Component</h4>
-                        <Badge variant="secondary" className="font-mono text-xs">
-                          {finding.affected_component}
-                        </Badge>
-                      </div>
-                    )}
-                    {finding.cwe_id && (
-                      <div>
-                        <h4 className="text-sm font-semibold text-primary mb-2">CWE</h4>
-                        <Badge variant="outline" className="font-mono text-xs">{finding.cwe_id}</Badge>
-                      </div>
-                    )}
-
-                    {/* POC Images */}
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <h4 className="text-sm font-semibold text-primary">Proof of Concept (POC)</h4>
-                        <div>
-                          <input
-                            type="file"
-                            ref={fileInputRef}
-                            className="hidden"
-                            accept=".jpg,.jpeg,.png"
-                            onChange={(e) => handleFileUpload(e, uploadingFindingId || finding.id)}
-                          />
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setUploadingFindingId(finding.id);
-                              fileInputRef.current?.click();
-                            }}
-                          >
-                            <Upload className="h-4 w-4 mr-1" />
-                            Upload POC
-                          </Button>
-                        </div>
-                      </div>
-                      {findingPocs.length > 0 ? (
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                          {findingPocs.map(poc => (
-                            <div key={poc.id} className="relative group">
-                              <img
-                                src={`${STATIC_BASE}${poc.file_path}`}
-                                alt={poc.file_name}
-                                className="rounded-lg border border-border/50 w-full h-32 object-cover cursor-pointer hover:opacity-80"
-                                onClick={(e) => { e.stopPropagation(); window.open(`${STATIC_BASE}${poc.file_path}`, '_blank'); }}
-                              />
-                              {!!userId && poc.uploaded_by === userId && (
-                                <button
-                                  type="button"
-                                  className="absolute top-1 right-1 h-5 w-5 rounded-full bg-destructive text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 z-10"
-                                  onClick={(e) => { e.stopPropagation(); handleDeletePoc(poc); }}
-                                  title="Delete POC"
-                                >
-                                  <X className="h-3 w-3" />
-                                </button>
-                              )}
-                              <p className="text-xs text-muted-foreground mt-1 truncate">{poc.file_name}</p>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-sm text-muted-foreground">No POC images uploaded yet.</p>
-                      )}
-                    </div>
-
-                    {/* Retest Status */}
-                    <div className="pt-2 border-t border-border/50">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h4 className="text-sm font-semibold text-primary mb-1">Retest Status</h4>
-                          <div className="flex items-center gap-2">
-                            {finding.retest_status ? (
-                              <>
-                                {getRetestBadge(finding.retest_status)}
-                                {finding.retest_date && (
-                                  <span className="text-xs text-muted-foreground ml-2">
-                                    Last tested: {new Date(finding.retest_date).toLocaleDateString()}
-                                  </span>
-                                )}
-                                {finding.retested_by && (
-                                  <span className="text-xs text-muted-foreground">
-                                    by {getUsername(finding.retested_by)}
-                                  </span>
-                                )}
-                              </>
-                            ) : (
-                              <span className="text-sm text-muted-foreground">Not retested yet</span>
+                            <Badge variant="secondary" className="text-xs max-w-[120px] sm:hidden block">
+                              <span className="truncate block">{getProjectName(finding.project_id)}</span>
+                            </Badge>
+                            {findingPocs.length > 0 && (
+                              <Badge variant="outline" className="text-xs">
+                                <ImageIcon className="h-3 w-3 mr-1" />
+                                {findingPocs.length} POC{findingPocs.length > 1 ? 's' : ''}
+                              </Badge>
                             )}
                           </div>
-                        </div>
-                        <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
-                          <Select
-                            value={finding.retest_status || ''}
-                            onValueChange={(value) =>
-                              handleUpdateRetestStatus(finding.id, value as RetestStatus)
-                            }
-                          >
-                            <SelectTrigger className="w-32 h-8 text-xs">
-                              <SelectValue placeholder="Update status" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="Open">Open</SelectItem>
-                              <SelectItem value="Fixed">Fixed</SelectItem>
-                              <SelectItem value="Not Fixed">Not Fixed</SelectItem>
-                            </SelectContent>
-                          </Select>
+                          <h3 className="font-semibold mt-2">{finding.title}</h3>
+                          <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
+                            {finding.description}
+                          </p>
                         </div>
                       </div>
-                    </div>
-
-                    <div className="flex items-center gap-4 text-sm text-muted-foreground pt-2 border-t border-border/50">
-                      <span>Reported by: {getUsername(finding.created_by)}</span>
-                      <span>Created: {new Date(finding.created_at).toLocaleDateString()}</span>
+                      <div className="flex items-center gap-3">
+                        <Badge variant={finding.status === 'Open' ? 'destructive' : 'secondary'}>
+                          {finding.status}
+                        </Badge>
+                        {finding.retest_status && getRetestBadge(finding.retest_status)}
+                        {canDelete && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={(e) => { e.stopPropagation(); handleDelete(finding.id); }}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        )}
+                        {isExpanded
+                          ? <ChevronUp className="h-5 w-5 text-muted-foreground" />
+                          : <ChevronDown className="h-5 w-5 text-muted-foreground" />
+                        }
+                      </div>
                     </div>
                   </div>
-                )}
-              </Card>
-            );
-          })}
-        </div>
 
-        {filteredFindings.length === 0 && (
-          <Card className="p-12 text-center">
-            <AlertTriangle className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-            <p className="text-lg font-medium">No findings found</p>
-            <p className="text-sm text-muted-foreground mt-1">
-              Try adjusting your search or filter criteria
-            </p>
-          </Card>
-        )}
+                  {isExpanded && (
+                    <div className="px-4 pb-4 pt-2 border-t border-border/50 space-y-4 animate-fade-in">
+                      {finding.steps_to_reproduce && (
+                        <div>
+                          <h4 className="text-sm font-semibold text-primary mb-2">Steps to Reproduce</h4>
+                          <pre className="text-sm text-muted-foreground whitespace-pre-wrap font-mono bg-secondary/30 p-3 rounded-lg">
+                            {finding.steps_to_reproduce}
+                          </pre>
+                        </div>
+                      )}
+                      {finding.impact && (
+                        <div>
+                          <h4 className="text-sm font-semibold text-primary mb-2">Impact</h4>
+                          <p className="text-sm text-muted-foreground">{finding.impact}</p>
+                        </div>
+                      )}
+                      {finding.remediation && (
+                        <div>
+                          <h4 className="text-sm font-semibold text-primary mb-2">Remediation</h4>
+                          <pre className="text-sm text-muted-foreground whitespace-pre-wrap bg-secondary/30 p-3 rounded-lg">
+                            {finding.remediation}
+                          </pre>
+                        </div>
+                      )}
+                      {finding.affected_component && (
+                        <div>
+                          <h4 className="text-sm font-semibold text-primary mb-2">Affected Component</h4>
+                          <Badge variant="secondary" className="font-mono text-xs">
+                            {finding.affected_component}
+                          </Badge>
+                        </div>
+                      )}
+                      {finding.cwe_id && (
+                        <div>
+                          <h4 className="text-sm font-semibold text-primary mb-2">CWE</h4>
+                          <Badge variant="outline" className="font-mono text-xs">{finding.cwe_id}</Badge>
+                        </div>
+                      )}
+
+                      {/* POC Images with Blob URLs */}
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="text-sm font-semibold text-primary">Proof of Concept (POC)</h4>
+                          <div>
+                            <input
+                              type="file"
+                              ref={fileInputRef}
+                              className="hidden"
+                              accept=".jpg,.jpeg,.png"
+                              onChange={(e) => handleFileUpload(e, uploadingFindingId || finding.id)}
+                            />
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setUploadingFindingId(finding.id);
+                                fileInputRef.current?.click();
+                              }}
+                            >
+                              <Upload className="h-4 w-4 mr-1" />
+                              Upload POC
+                            </Button>
+                          </div>
+                        </div>
+                        {findingPocs.length > 0 ? (
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                            {findingPocs.map(poc => (
+                              <div key={poc.id} className="relative group">
+                                <img
+                                  src={poc.blob_data || `${STATIC_BASE}${poc.file_path}`}
+                                  alt={poc.file_name}
+                                  className="rounded-lg border border-border/50 w-full h-32 object-cover cursor-pointer hover:opacity-80"
+                                  onClick={(e) => { 
+                                    e.stopPropagation(); 
+                                    window.open(poc.blob_data || `${STATIC_BASE}${poc.file_path}`, '_blank');
+                                  }}
+                                />
+                                {!!userId && poc.uploaded_by === userId && (
+                                  <button
+                                    type="button"
+                                    className="absolute top-1 right-1 h-5 w-5 rounded-full bg-destructive text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 z-10"
+                                    onClick={(e) => { e.stopPropagation(); handleDeletePoc(poc); }}
+                                    title="Delete POC"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                )}
+                                <p className="text-xs text-muted-foreground mt-1 truncate">{poc.file_name}</p>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">No POC images uploaded yet.</p>
+                        )}
+                      </div>
+
+                      {/* Retest Status */}
+                      <div className="pt-2 border-t border-border/50">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h4 className="text-sm font-semibold text-primary mb-1">Retest Status</h4>
+                            <div className="flex items-center gap-2">
+                              {finding.retest_status ? (
+                                <>
+                                  {getRetestBadge(finding.retest_status)}
+                                  {finding.retest_date && (
+                                    <span className="text-xs text-muted-foreground ml-2">
+                                      Last tested: {new Date(finding.retest_date).toLocaleDateString()}
+                                    </span>
+                                  )}
+                                  {finding.retested_by && (
+                                    <span className="text-xs text-muted-foreground">
+                                      by {getUsername(finding.retested_by)}
+                                    </span>
+                                  )}
+                                </>
+                              ) : (
+                                <span className="text-sm text-muted-foreground">Not retested yet</span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+                            <Select
+                              value={finding.retest_status || ''}
+                              onValueChange={(value) =>
+                                handleUpdateRetestStatus(finding.id, value as RetestStatus)
+                              }
+                            >
+                              <SelectTrigger className="w-32 h-8 text-xs">
+                                <SelectValue placeholder="Update status" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="Open">Open</SelectItem>
+                                <SelectItem value="Fixed">Fixed</SelectItem>
+                                <SelectItem value="Not Fixed">Not Fixed</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-4 text-sm text-muted-foreground pt-2 border-t border-border/50">
+                        <span>Reported by: {getUsername(finding.created_by)}</span>
+                        <span>Created: {new Date(finding.created_at).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                  )}
+                </Card>
+              );
+            })
+          )}
+        </div>
       </div>
 
       {/* Delete Confirmation Dialog */}

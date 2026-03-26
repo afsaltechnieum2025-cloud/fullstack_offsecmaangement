@@ -58,7 +58,7 @@ router.get('/', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-//  POST /api/findings
+//  POST /api/findings (UPDATED with new fields)
 // ─────────────────────────────────────────────────────────────
 router.post('/', async (req, res) => {
   const {
@@ -74,6 +74,19 @@ router.post('/', async (req, res) => {
     affected_component = null,
     cwe_id             = null,
     created_by         = null,
+    // NEW FIELDS
+    finding_type       = 'pentest',  // Default to pentest for backward compatibility
+    // SAST specific fields
+    file_path          = null,
+    line_number        = null,
+    tool_name          = null,
+    // ASM specific fields
+    asset_type         = null,
+    port               = null,
+    protocol           = null,
+    // LLM specific fields
+    llm_category       = null,
+    prompt_example     = null,
   } = req.body;
 
   const validSeverities = ['critical', 'high', 'medium', 'low', 'informational', 'info'];
@@ -83,19 +96,31 @@ router.post('/', async (req, res) => {
   if (!validSeverities.includes(String(severity).toLowerCase())) {
     return res.status(400).json({ message: `Invalid severity value: "${severity}". Must be one of: Critical, High, Medium, Low, Informational` });
   }
+  
   // Normalize to title case before storing
   const severityNormalized = String(severity).charAt(0).toUpperCase() + String(severity).slice(1).toLowerCase();
+  
+  // Validate finding_type
+  const validFindingTypes = ['pentest', 'sast', 'asm', 'llm'];
+  const normalizedFindingType = validFindingTypes.includes(finding_type) ? finding_type : 'pentest';
 
   try {
     const [[{ newId }]] = await db.query(`SELECT UUID() AS newId`);
+    
+    // Insert with all new fields
     await db.query(
       `INSERT INTO findings
         (id, project_id, title, description, severity, cvss_score, status,
-         steps_to_reproduce, impact, remediation, affected_component, cwe_id, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         steps_to_reproduce, impact, remediation, affected_component, cwe_id, created_by,
+         finding_type, file_path, line_number, tool_name, asset_type, port, protocol,
+         llm_category, prompt_example)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [newId, project_id, title, description, severityNormalized, cvss_score, status,
-       steps_to_reproduce, impact, remediation, affected_component, cwe_id, created_by]
+       steps_to_reproduce, impact, remediation, affected_component, cwe_id, created_by,
+       normalizedFindingType, file_path, line_number, tool_name, asset_type, port, protocol,
+       llm_category, prompt_example]
     );
+    
     const [rows] = await db.query('SELECT * FROM findings WHERE id = ?', [newId]);
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -163,7 +188,7 @@ router.delete('/:id/pocs/:pocId', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-//  GET /api/findings/:id
+//  GET /api/findings/:id (UPDATED to return all fields)
 // ─────────────────────────────────────────────────────────────
 router.get('/:id', async (req, res) => {
   try {
@@ -177,14 +202,18 @@ router.get('/:id', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-//  PATCH /api/findings/:id
+//  PATCH /api/findings/:id (UPDATED with new fields)
 // ─────────────────────────────────────────────────────────────
 router.patch('/:id', async (req, res) => {
   const allowed = [
     'title', 'description', 'severity', 'cvss_score', 'status',
     'steps_to_reproduce', 'impact', 'remediation', 'affected_component',
     'cwe_id', 'retest_status', 'retest_date', 'retest_notes', 'retested_by',
+    // NEW FIELDS
+    'finding_type', 'file_path', 'line_number', 'tool_name',
+    'asset_type', 'port', 'protocol', 'llm_category', 'prompt_example'
   ];
+  
   const updates = Object.entries(req.body)
     .filter(([key]) => allowed.includes(key))
     .reduce((acc, [key, val]) => ({ ...acc, [key]: val }), {});
@@ -192,8 +221,10 @@ router.patch('/:id', async (req, res) => {
   if (Object.keys(updates).length === 0) {
     return res.status(400).json({ message: 'No valid fields to update' });
   }
+  
   const setClauses = Object.keys(updates).map(k => `${k} = ?`).join(', ');
   const values     = [...Object.values(updates), req.params.id];
+  
   try {
     const [result] = await db.query(`UPDATE findings SET ${setClauses} WHERE id = ?`, values);
     if (result.affectedRows === 0) return res.status(404).json({ message: 'Finding not found' });
@@ -216,6 +247,30 @@ router.delete('/:id', async (req, res) => {
   } catch (err) {
     console.error('DELETE /api/findings/:id error:', err);
     res.status(500).json({ message: err.sqlMessage || err.message || 'Failed to delete finding' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+//  GET /api/findings/pocs/batch?finding_ids=id1,id2,id3
+// ─────────────────────────────────────────────────────────────
+router.get('/pocs/batch', async (req, res) => {
+  const { finding_ids } = req.query;
+  if (!finding_ids) {
+    return res.status(400).json({ message: 'finding_ids query param is required' });
+  }
+  
+  const ids = finding_ids.split(',');
+  const placeholders = ids.map(() => '?').join(',');
+  
+  try {
+    const [rows] = await db.query(
+      `SELECT * FROM finding_pocs WHERE finding_id IN (${placeholders}) ORDER BY uploaded_at ASC`,
+      ids
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('GET /api/findings/pocs/batch error:', err);
+    res.status(500).json({ message: err.sqlMessage || err.message || 'Failed to fetch POCs' });
   }
 });
 

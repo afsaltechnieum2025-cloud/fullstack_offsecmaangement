@@ -36,7 +36,7 @@ const navigation = [
   { name: 'Dashboard',    href: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'manager', 'tester'] },
   { name: 'Projects',     href: '/projects',  icon: FolderKanban,    roles: ['admin', 'manager', 'tester'] },
   { name: 'Findings',     href: '/findings',  icon: Bug,             roles: ['admin', 'manager', 'tester'] },
-  { name: 'Hall Of Fame', href: '/HallofFame',icon: Trophy,          roles: ['admin', 'manager', 'tester'] },
+  { name: 'Wall Of Fame', href: '/HallofFame',icon: Trophy,          roles: ['admin', 'manager', 'tester'] },
   { name: 'Trending',     href: '/trending',  icon: TrendingUp,      roles: ['admin', 'manager', 'tester'] },
   { name: 'Users',        href: '/users',     icon: Users,           roles: ['admin'] },
   { name: 'ASM',          href: '/asm',       icon: Globe,           roles: ['admin'] },

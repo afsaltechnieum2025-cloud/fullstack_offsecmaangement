@@ -30,6 +30,7 @@ import {
   AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { UserProfileDialog } from '@/components/UserProfileDialog';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:5000/api';
 
@@ -79,6 +80,10 @@ export default function Users() {
   const [userAssignments, setUserAssignments] = useState<ProjectAssignment[]>([]);
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
   const [isSavingAssignments, setIsSavingAssignments] = useState(false);
+  
+  // New state for user profile dialog
+  const [selectedUserForProfile, setSelectedUserForProfile] = useState<UserWithRole | null>(null);
+  const [isProfileDialogOpen, setIsProfileDialogOpen] = useState(false);
 
   // Only admins can access this page
   if (role !== 'admin') return <Navigate to="/dashboard" replace />;
@@ -215,6 +220,12 @@ export default function Users() {
 
   const isProjectAssigned = (projectId: number) =>
     userAssignments.some(a => a.project_id === projectId);
+
+  const openUserProfile = (user: UserWithRole, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedUserForProfile(user);
+    setIsProfileDialogOpen(true);
+  };
 
   const filteredUsers = users.filter(u =>
     u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -360,7 +371,13 @@ export default function Users() {
         {/* Users Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredUsers.map((member, index) => (
-            <Card key={member.id} glow className="animate-fade-in" style={{ animationDelay: `${index * 50}ms` }}>
+            <Card 
+              key={member.id} 
+              glow 
+              className="animate-fade-in cursor-pointer transition-all hover:scale-[1.02] hover:shadow-lg"
+              onClick={() => openUserProfile(member, { stopPropagation: () => {} } as React.MouseEvent)}
+              style={{ animationDelay: `${index * 50}ms` }}
+            >
               <CardContent className="p-4">
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-4 min-w-0">
@@ -376,18 +393,25 @@ export default function Users() {
                     </div>
                   </div>
                   <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
+                    <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
                       <Button variant="ghost" size="icon" className="h-8 w-8">
                         <MoreVertical className="h-4 w-4" />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => handleChangeRole(member)}>Change Role</DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => openProjectsDialog(member)}>
-                        <FolderKanban className="h-4 w-4 mr-2" />Manage Projects
+                    <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                      <DropdownMenuItem onClick={() => handleChangeRole(member)}>
+                        Change Role
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => openDeleteDialog(member)} className="text-destructive focus:text-destructive">
-                        <Trash2 className="h-4 w-4 mr-2" />Delete User
+                      <DropdownMenuItem onClick={() => openProjectsDialog(member)}>
+                        <FolderKanban className="h-4 w-4 mr-2" />
+                        Manage Projects
+                      </DropdownMenuItem>
+                      <DropdownMenuItem 
+                        onClick={() => openDeleteDialog(member)} 
+                        className="text-destructive focus:text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Delete User
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -483,7 +507,10 @@ export default function Users() {
                   {allProjects.map((project) => {
                     const assigned = isProjectAssigned(project.id);
                     return (
-                      <div key={project.id} className="flex items-center justify-between p-3 rounded-lg border bg-secondary/30 hover:bg-secondary/50 transition-colors">
+                      <div 
+                        key={project.id} 
+                        className="flex items-center justify-between p-3 rounded-lg border bg-secondary/30 hover:bg-secondary/50 transition-colors"
+                      >
                         <div className="flex items-center gap-3">
                           <Checkbox
                             id={String(project.id)}
@@ -507,6 +534,15 @@ export default function Users() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* User Profile Dialog */}
+        <UserProfileDialog
+          userId={selectedUserForProfile?.id || 0}
+          userName={selectedUserForProfile?.name || ''}
+          userFullName={selectedUserForProfile?.full_name || undefined}
+          open={isProfileDialogOpen}
+          onOpenChange={setIsProfileDialogOpen}
+        />
 
       </div>
     </DashboardLayout>
