@@ -32,20 +32,21 @@ import {
 } from 'recharts';
 
 // ─── Colors ───────────────────────────────────────────────────────────────────
+// Consistent with Projects and ProjectDetail pages
 
 const severityColors = {
-  Critical:      '#ef4444',
-  High:          '#f97316',
-  Medium:        '#eab308',
-  Low:           '#22c55e',
-  Informational: '#3b82f6',
+  Critical:      '#ef4444',  // Red
+  High:          '#f97316',  // Orange
+  Medium:        '#eab308',  // Yellow
+  Low:           '#eab308',  // Yellow (same as Medium)
+  Informational: '#6b7280',  // Gray
 };
 
 const statusColors = {
-  active:    '#10b981',
-  completed: '#0ea5e9',
-  pending:   '#f59e0b',
-  overdue:   '#ef4444',
+  active:    '#10b981',  // Green
+  completed: '#0ea5e9',  // Blue
+  pending:   '#f59e0b',  // Orange
+  overdue:   '#ef4444',  // Red
 };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -333,12 +334,12 @@ export default function Dashboard() {
                   <p className="text-sm text-muted-foreground">Completed</p>
                   <p className="text-3xl font-bold mt-1">{stats.completedProjects}</p>
                 </div>
-                <div className="h-12 w-12 rounded-xl bg-emerald-500/10 flex items-center justify-center">
-                  <CheckCircle className="h-6 w-6 text-emerald-500" />
+                <div className="h-12 w-12 rounded-xl bg-green-500/10 flex items-center justify-center">
+                  <CheckCircle className="h-6 w-6 text-green-500" />
                 </div>
               </div>
               <div className="flex items-center gap-2 mt-3 text-sm text-muted-foreground">
-                <TrendingUp className="h-4 w-4 text-emerald-500" />
+                <TrendingUp className="h-4 w-4 text-green-500" />
                 <span>On track this month</span>
               </div>
             </CardContent>
@@ -363,15 +364,15 @@ export default function Dashboard() {
           </Card>
         </div>
 
-        {/* Severity breakdown bar — quick glance */}
+        {/* Severity breakdown bar — quick glance (Updated colors) */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           {(
             [
               { label: 'Critical',      count: stats.criticalFindings, bg: 'bg-red-500/10',    text: 'text-red-500',    border: 'border-red-500/30'    },
               { label: 'High',          count: stats.highFindings,     bg: 'bg-orange-500/10', text: 'text-orange-500', border: 'border-orange-500/30' },
               { label: 'Medium',        count: stats.mediumFindings,   bg: 'bg-yellow-500/10', text: 'text-yellow-500', border: 'border-yellow-500/30' },
-              { label: 'Low',           count: stats.lowFindings,      bg: 'bg-green-500/10',  text: 'text-green-500',  border: 'border-green-500/30'  },
-              { label: 'Informational', count: stats.infoFindings,     bg: 'bg-blue-500/10',   text: 'text-blue-500',   border: 'border-blue-500/30'   },
+              { label: 'Low',           count: stats.lowFindings,      bg: 'bg-yellow-500/10', text: 'text-yellow-500', border: 'border-yellow-500/30' },
+              { label: 'Informational', count: stats.infoFindings,     bg: 'bg-gray-500/10',   text: 'text-gray-500',   border: 'border-gray-500/30'   },
             ] as const
           ).map(({ label, count, bg, text, border }) => (
             <Card key={label} className={`p-4 border ${border} ${bg} animate-fade-in`}>
@@ -389,7 +390,7 @@ export default function Dashboard() {
         {/* Charts Row */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-          {/* Findings by Severity — pie */}
+          {/* Findings by Severity — pie (Updated colors) */}
           <Card className="animate-fade-in" style={{ animationDelay: '200ms' }}>
             <CardHeader>
               <CardTitle className="text-lg">Findings by Severity</CardTitle>
@@ -435,7 +436,7 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
-          {/* Findings Trend — live from allFindings */}
+          {/* Findings Trend — live from allFindings (Updated gradient color to orange) */}
           <Card className="lg:col-span-2 animate-fade-in hidden sm:block" style={{ animationDelay: '250ms' }}>
             <CardHeader>
               <CardTitle className="text-lg">Findings Trend</CardTitle>
@@ -478,39 +479,53 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
           {/* Recent Projects — finding count from live data */}
-          <Card className="animate-fade-in" style={{ animationDelay: '300ms' }}>
-            <CardHeader>
-              <CardTitle className="text-lg">Recent Projects</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {recentProjects.length > 0 ? (
-                recentProjects.map((project) => (
-                  <div
-                    key={project.id}
-                    className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 p-4 rounded-lg bg-secondary/30 border border-border/50 hover:border-primary/30 transition-colors"
-                  >
-                    <div className="min-w-0">
-                      <p className="font-medium truncate">{project.name}</p>
-                      <p className="text-sm text-muted-foreground truncate">{project.client}</p>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <Badge variant={project.status as 'active' | 'completed' | 'pending' | 'overdue'}>
-                        {project.status}
-                      </Badge>
-                      <span className="text-sm text-muted-foreground whitespace-nowrap">
-                        {getProjectFindingCount(project.id)} findings
-                      </span>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="flex flex-col items-center justify-center py-10 text-center text-muted-foreground">
-                  <FolderKanban className="h-10 w-10 mb-3 opacity-30" />
-                  <p className="text-sm">No projects assigned to you yet.</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+         <Card className="animate-fade-in" style={{ animationDelay: '300ms' }}>
+  <CardHeader>
+    <CardTitle className="text-lg">Recent Projects</CardTitle>
+  </CardHeader>
+  <CardContent className="space-y-4">
+    {recentProjects.length > 0 ? (
+      recentProjects.map((project) => {
+        // Get the appropriate badge style based on status
+        const getStatusBadge = (status: string) => {
+          if (status === 'completed') {
+            return <Badge className="bg-green-500/10 text-green-500 border-green-500/20 hover:bg-green-500/20">completed</Badge>;
+          }
+          const variants: Record<string, 'active' | 'pending' | 'overdue' | 'secondary'> = {
+            active: 'active',
+            pending: 'pending',
+            overdue: 'overdue',
+          };
+          const variant = variants[status] || 'secondary';
+          return <Badge variant={variant}>{status}</Badge>;
+        };
+
+        return (
+          <div
+            key={project.id}
+            className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 p-4 rounded-lg bg-secondary/30 border border-border/50 hover:border-primary/30 transition-colors"
+          >
+            <div className="min-w-0">
+              <p className="font-medium truncate">{project.name}</p>
+              <p className="text-sm text-muted-foreground truncate">{project.client}</p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {getStatusBadge(project.status)}
+              <span className="text-sm text-muted-foreground whitespace-nowrap">
+                {getProjectFindingCount(project.id)} findings
+              </span>
+            </div>
+          </div>
+        );
+      })
+    ) : (
+      <div className="flex flex-col items-center justify-center py-10 text-center text-muted-foreground">
+        <FolderKanban className="h-10 w-10 mb-3 opacity-30" />
+        <p className="text-sm">No projects assigned to you yet.</p>
+      </div>
+    )}
+  </CardContent>
+</Card>
 
           {/* Team Members */}
           {(role === 'admin' || role === 'manager') && (

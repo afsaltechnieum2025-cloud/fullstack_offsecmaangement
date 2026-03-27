@@ -3,13 +3,15 @@ const cors = require('cors');
 require('dotenv').config();
 
 const app = express();
+const notifyMiddleware    = require('./middleware/notifyMiddleware'); // ← ADD
+const notificationsRoutes = require('./routes/notifications');        // ← ADD
 
 // CORS configuration
 app.use(cors({ 
-  origin: ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:8080'],
+  origin: ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:8080', 'http://16.171.148.233'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'Pragma'] // ← ADD last two
 }));
 
 app.use(express.json());
@@ -27,6 +29,7 @@ const halloffameRoutes = require('./routes/halloffame');
 const path = require('path');
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+app.use(notifyMiddleware);   
 // API routes
 app.use('/api/auth',      authRoutes);
 app.use('/api/trending',  trendingRoutes);
@@ -34,6 +37,7 @@ app.use('/api/users',     usersRoutes);
 app.use('/api/projects',  projectsRoutes);
 app.use('/api/findings',  findingsRoutes);
 app.use('/api/wof',       halloffameRoutes);
+app.use('/api/notifications', notificationsRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {

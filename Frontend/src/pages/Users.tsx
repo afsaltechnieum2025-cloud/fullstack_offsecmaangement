@@ -31,6 +31,7 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { UserProfileDialog } from '@/components/UserProfileDialog';
+import { triggerNotifyRefresh } from '@/utils/notifyRefresh';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:5000/api';
 
@@ -80,10 +81,13 @@ export default function Users() {
   const [userAssignments, setUserAssignments] = useState<ProjectAssignment[]>([]);
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
   const [isSavingAssignments, setIsSavingAssignments] = useState(false);
-  
+
   // New state for user profile dialog
   const [selectedUserForProfile, setSelectedUserForProfile] = useState<UserWithRole | null>(null);
   const [isProfileDialogOpen, setIsProfileDialogOpen] = useState(false);
+
+
+
 
   // Only admins can access this page
   if (role !== 'admin') return <Navigate to="/dashboard" replace />;
@@ -122,6 +126,7 @@ export default function Users() {
       toast.success('Role updated successfully');
       setIsRoleDialogOpen(false);
       fetchUsers();
+      triggerNotifyRefresh(); // ← ADD
     } catch {
       toast.error('Failed to update role');
     } finally {
@@ -163,6 +168,7 @@ export default function Users() {
       setIsDeleteDialogOpen(false);
       setUserToDelete(null);
       fetchUsers();
+      triggerNotifyRefresh(); // ← ADD
     } catch {
       toast.error('Failed to delete user');
     } finally {
@@ -201,6 +207,7 @@ export default function Users() {
         await fetch(`${API}/users/${selectedUserForProjects.id}/projects/${projectId}`, { method: 'DELETE' });
         setUserAssignments(prev => prev.filter(a => a.project_id !== projectId));
         toast.success('Project unassigned');
+        triggerNotifyRefresh(); // ← ADD
       } else {
         const res = await fetch(`${API}/users/${selectedUserForProjects.id}/projects`, {
           method: 'POST',
@@ -210,6 +217,7 @@ export default function Users() {
         const data = await res.json();
         setUserAssignments(prev => [...prev, { id: data.id, user_id: selectedUserForProjects.id, project_id: projectId }]);
         toast.success('Project assigned');
+        triggerNotifyRefresh(); // ← ADD
       }
     } catch {
       toast.error('Failed to update assignment');
@@ -371,11 +379,11 @@ export default function Users() {
         {/* Users Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredUsers.map((member, index) => (
-            <Card 
-              key={member.id} 
-              glow 
+            <Card
+              key={member.id}
+              glow
               className="animate-fade-in cursor-pointer transition-all hover:scale-[1.02] hover:shadow-lg"
-              onClick={() => openUserProfile(member, { stopPropagation: () => {} } as React.MouseEvent)}
+              onClick={() => openUserProfile(member, { stopPropagation: () => { } } as React.MouseEvent)}
               style={{ animationDelay: `${index * 50}ms` }}
             >
               <CardContent className="p-4">
@@ -406,8 +414,8 @@ export default function Users() {
                         <FolderKanban className="h-4 w-4 mr-2" />
                         Manage Projects
                       </DropdownMenuItem>
-                      <DropdownMenuItem 
-                        onClick={() => openDeleteDialog(member)} 
+                      <DropdownMenuItem
+                        onClick={() => openDeleteDialog(member)}
                         className="text-destructive focus:text-destructive"
                       >
                         <Trash2 className="h-4 w-4 mr-2" />
@@ -507,8 +515,8 @@ export default function Users() {
                   {allProjects.map((project) => {
                     const assigned = isProjectAssigned(project.id);
                     return (
-                      <div 
-                        key={project.id} 
+                      <div
+                        key={project.id}
                         className="flex items-center justify-between p-3 rounded-lg border bg-secondary/30 hover:bg-secondary/50 transition-colors"
                       >
                         <div className="flex items-center gap-3">
