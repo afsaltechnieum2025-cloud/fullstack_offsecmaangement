@@ -35,11 +35,11 @@ import {
 // Consistent with Projects and ProjectDetail pages
 
 const severityColors = {
-  Critical:      '#ef4444',   // red-500
-  High:          '#f97316',   // orange-500
-  Medium:        '#fb923c',   // orange-400
-  Low:           '#f97316',   // primary orange — dimmed via opacity in chart
-  Informational: '#6b7280',   // gray
+  Critical:      '#ef4444',   // red-500 - matches findings box
+  High:          '#f97316',   // orange-500 - matches findings box
+  Medium:        '#fb923c',   // orange-400 - matches findings box
+  Low:           '#f97316',   // orange-500 - matches findings box
+  Informational: '#6b7280',   // gray-500 - matches findings box
 };
 
 const statusColors = {
@@ -223,14 +223,14 @@ export default function Dashboard() {
     };
   }, [user, role, projects, allFindings]);
 
-  // ─── Chart data ─────────────────────────────────────────────────────────────
+  // ─── Chart data with consistent colors from findings box ────────────────────
 
   const severityData = [
-    { name: 'Critical', value: stats.criticalFindings, color: severityColors.Critical },
-    { name: 'High', value: stats.highFindings, color: severityColors.High },
-    { name: 'Medium', value: stats.mediumFindings, color: severityColors.Medium },
-    { name: 'Low', value: stats.lowFindings, color: severityColors.Low },
-    { name: 'Informational', value: stats.infoFindings, color: severityColors.Informational },
+    { name: 'Critical', value: stats.criticalFindings, color: '#ef4444' },    // red-500
+    { name: 'High', value: stats.highFindings, color: '#f97316' },            // orange-500
+    { name: 'Medium', value: stats.mediumFindings, color: '#feaf6e' },        // orange-400
+    { name: 'Low', value: stats.lowFindings, color: '#fad7bf' },              // orange-500
+    { name: 'Informational', value: stats.infoFindings, color: '#6b7280' },   // gray-500
   ];
 
   const projectStatusData = [
@@ -280,6 +280,12 @@ export default function Dashboard() {
 
   const getProjectFindingCount = (projectId: string) =>
     allFindings.filter(f => f.project_id === projectId).length;
+
+  // ─── Helper function to capitalize role ───────────────────────────────────
+  const capitalizeRole = (role: string | null): string => {
+    if (!role) return 'User';
+    return role.charAt(0).toUpperCase() + role.slice(1).toLowerCase();
+  };
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
@@ -390,7 +396,7 @@ export default function Dashboard() {
         {/* Charts Row */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-          {/* Findings by Severity — pie (Updated colors) */}
+          {/* Findings by Severity — pie with EXACT colors matching findings box above */}
           <Card className="animate-fade-in" style={{ animationDelay: '200ms' }}>
             <CardHeader>
               <CardTitle className="text-lg">Findings by Severity</CardTitle>
@@ -562,20 +568,19 @@ export default function Dashboard() {
                           </p>
                         </div>
                         <div className="shrink-0">
-                          {/* <Badge variant={member.role === 'admin' ? 'default' : 'secondary'}>
-                            {member.role ?? 'user'}
-                          </Badge> */}
                           {(() => {
-                            const r = member.role ?? 'user';
+                            const roleLower = member.role ?? 'user';
+                            const displayRole = capitalizeRole(roleLower);
                             const styles: Record<string, string> = {
                               admin: 'bg-primary text-primary-foreground border-primary shadow-sm shadow-primary/30',
                               manager: 'bg-primary/15 text-primary border-primary/40',
                               tester: 'bg-secondary text-muted-foreground border-border',
                               user: 'bg-secondary text-muted-foreground border-border',
                             };
+                            const roleKey = roleLower.toLowerCase();
                             return (
-                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${styles[r] ?? styles.user}`}>
-                                {r}
+                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${styles[roleKey] ?? styles.user}`}>
+                                {displayRole}
                               </span>
                             );
                           })()}
