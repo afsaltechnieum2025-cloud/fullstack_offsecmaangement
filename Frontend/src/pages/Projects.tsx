@@ -480,7 +480,8 @@ export default function Projects() {
         const res = await fetch(`${API_BASE}/projects/${selectedProject.id}/assignments`, {
           method: 'POST',
           headers: authHeaders(),
-          body: JSON.stringify({ user_id: profile.user_id }),
+          // body: JSON.stringify({ user_id: profile.user_id }),
+          body: JSON.stringify({ user_id: profile.user_id, assigned_by_id: user?.id }),
         });
 
         if (res.status === 409) {

@@ -138,7 +138,7 @@ router.get('/:id/profile', async (req, res) => {
       ORDER BY f.created_at DESC
     `, [String(userId)]);
     
-    // Get Hall of Fame findings by user
+    // Get Wall of Fame findings by user
     const [hofFindings] = await db.query(`
       SELECT h.id, h.title, h.severity, h.status, h.cve_id, 
              h.reported_at, h.resolved_at, p.name as project_name,
@@ -287,7 +287,7 @@ router.get('/:id/profile/report', async (req, res) => {
       ORDER BY f.created_at DESC
     `, [String(userId)]);
     
-    // Get Hall of Fame findings
+    // Get Wall of Fame findings
     const [hofFindings] = await db.query(`
       SELECT h.title, h.severity, h.status, h.cve_id, 
              h.reported_at, h.resolved_at, p.name as project_name,

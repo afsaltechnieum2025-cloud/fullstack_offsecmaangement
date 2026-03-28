@@ -4,7 +4,7 @@ const ROUTE_MAP = {
   '/api/findings': { noun: 'Finding',            type: 'finding'  },
   '/api/projects': { noun: 'Project',            type: 'project'  },
   '/api/users':    { noun: 'User',               type: 'user'     },
-  '/api/wof':      { noun: 'Hall of Fame entry', type: 'general'  },
+  '/api/wof':      { noun: 'Wall of Fame entry', type: 'general'  },
   '/api/trending': { noun: 'Note',               type: 'general'  },
 };
 

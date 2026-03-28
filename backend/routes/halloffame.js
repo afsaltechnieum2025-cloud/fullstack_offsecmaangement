@@ -351,7 +351,7 @@ router.get('/test', async (req, res) => {
     res.json({
       success: true,
       count: rows[0].count,
-      message: 'Hall of Fame API is working'
+      message: 'Wall of Fame API is working'
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -240,13 +240,25 @@ export default function Users() {
     u.email.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const getRoleBadge = (userRole: AppRole | null) => {
-    if (!userRole) return <Badge variant="outline" className="text-muted-foreground">No role</Badge>;
-    const variants: Record<string, 'default' | 'secondary' | 'outline'> = {
-      admin: 'default', manager: 'secondary', tester: 'outline',
-    };
-    return <Badge variant={variants[userRole]}>{userRole}</Badge>;
+ const getRoleBadge = (userRole: AppRole | null) => {
+  if (!userRole) return (
+    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border border-border text-muted-foreground">
+      No role
+    </span>
+  );
+
+  const styles: Record<AppRole, string> = {
+    admin:   'bg-primary text-primary-foreground border-primary shadow-sm shadow-primary/30',
+    manager: 'bg-primary/15 text-primary border-primary/40',
+    tester:  'bg-secondary text-muted-foreground border-border',
   };
+
+  return (
+    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${styles[userRole]}`}>
+      {userRole}
+    </span>
+  );
+};
 
   const roleStats = {
     admins: users.filter(u => u.role === 'admin').length,

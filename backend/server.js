@@ -61,6 +61,6 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
-  console.log(`📍 Hall of Fame API: http://localhost:${PORT}/api/wof`);
+  console.log(`📍 Wall of Fame API: http://localhost:${PORT}/api/wof`);
   console.log(`📍 Test endpoint: http://localhost:${PORT}/api/wof/test`);
 });
