@@ -11,7 +11,7 @@ import {
   Search, Plus, Trophy, ChevronDown, ChevronUp,
   Trash2, ShieldCheck, Bug, Star, BookOpen,
   Bold, Italic, List, Heading2, Quote, Code,
-  AlignLeft, ExternalLink,
+  AlignLeft, ExternalLink, Calendar,
 } from 'lucide-react';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -239,7 +239,7 @@ function BlogEditor({ value, onChange, placeholder }: {
   );
 }
 
-// ─── Blog Reader (display only) ───────────────────────────────────────────────
+// ─── Blog Reader ──────────────────────────────────────────────────────────────
 
 function BlogReader({ html }: { html: string }) {
   if (!html || html === '<br>' || html.trim() === '') return null;
@@ -268,7 +268,6 @@ function BlogReader({ html }: { html: string }) {
 function WriteupModal({ finding, onClose }: { finding: HofFinding; onClose: () => void }) {
   return (
     <DialogContent className="max-w-3xl max-h-[92vh] flex flex-col p-0 overflow-hidden">
-      {/* Header */}
       <div className="flex items-start gap-4 px-6 py-4 border-b border-border/50 bg-secondary/20 shrink-0">
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-2 mb-2">
@@ -278,9 +277,6 @@ function WriteupModal({ finding, onClose }: { finding: HofFinding; onClose: () =
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border bg-primary/10 text-primary border-primary/20">
                 {finding.cve_id}
               </span>
-            )}
-            {finding.category && (
-              <Badge variant="secondary" className="text-xs">{finding.category}</Badge>
             )}
           </div>
           <h2 className="text-base font-bold leading-snug pr-6">{finding.title}</h2>
@@ -298,8 +294,6 @@ function WriteupModal({ finding, onClose }: { finding: HofFinding; onClose: () =
           </div>
         </div>
       </div>
-
-      {/* Scrollable blog body */}
       <div className="flex-1 overflow-y-auto px-6 py-5">
         <div className="flex items-center gap-2 mb-4">
           <BookOpen className="h-4 w-4 text-primary" />
@@ -309,8 +303,6 @@ function WriteupModal({ finding, onClose }: { finding: HofFinding; onClose: () =
           <BlogReader html={finding.blog_url ?? ''} />
         </div>
       </div>
-
-      {/* Footer */}
       <div className="shrink-0 px-6 py-3 border-t border-border/50 bg-secondary/10 flex justify-end">
         <Button variant="outline" size="sm" onClick={onClose}>Close</Button>
       </div>
@@ -329,6 +321,7 @@ function AddFindingModal({ users, onClose, onSaved, token }: {
   const [form, setForm] = useState({
     user_id: '',
     title: '',
+    description: '',
     severity: 'medium',
     status: 'submitted',
     cve_id: '',
@@ -336,6 +329,13 @@ function AddFindingModal({ users, onClose, onSaved, token }: {
     blog_content: '',
   });
   const [saving, setSaving] = useState(false);
+  const dateInputRef = useRef<HTMLInputElement>(null);
+
+  const openDatePicker = () => {
+    const el = dateInputRef.current;
+    if (!el) return;
+    try { el.showPicker(); } catch { el.click(); }
+  };
 
   const save = async () => {
     if (!form.title.trim() || !form.user_id) {
@@ -350,6 +350,7 @@ function AddFindingModal({ users, onClose, onSaved, token }: {
         body: JSON.stringify({
           user_id: Number(form.user_id),
           title: form.title,
+          description: form.description || null,
           severity: form.severity,
           status: form.status,
           cve_id: form.cve_id || null,
@@ -379,9 +380,7 @@ function AddFindingModal({ users, onClose, onSaved, token }: {
           Add New Finding
         </DialogTitle>
       </DialogHeader>
-
       <div className="space-y-4 mt-4">
-        {/* Researcher */}
         <div className="space-y-2">
           <Label>Researcher *</Label>
           <Select value={form.user_id} onValueChange={v => setForm(f => ({ ...f, user_id: v }))}>
@@ -395,8 +394,6 @@ function AddFindingModal({ users, onClose, onSaved, token }: {
             </SelectContent>
           </Select>
         </div>
-
-        {/* Title */}
         <div className="space-y-2">
           <Label>Title *</Label>
           <Input
@@ -405,8 +402,16 @@ function AddFindingModal({ users, onClose, onSaved, token }: {
             onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
           />
         </div>
-
-        {/* Severity + Status + CVE + Date */}
+        <div className="space-y-2">
+          <Label>Description</Label>
+          <textarea
+            rows={3}
+            placeholder="Brief summary of the vulnerability — what it is and where it was found…"
+            value={form.description}
+            onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+          />
+        </div>
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
             <Label>Severity</Label>
@@ -438,21 +443,31 @@ function AddFindingModal({ users, onClose, onSaved, token }: {
               onChange={e => setForm(f => ({ ...f, cve_id: e.target.value }))}
             />
           </div>
-
-          {/* ── Fixed Date Picker ── */}
           <div className="space-y-2">
             <Label>Reported Date</Label>
-            <Input
-              type="date"
-              value={form.reported_at}
-              max={today}
-              onChange={e => setForm(f => ({ ...f, reported_at: e.target.value }))}
-              className="[color-scheme:dark] cursor-pointer"
-            />
+            <div
+              onClick={openDatePicker}
+              className="relative flex items-center h-10 rounded-md border border-input bg-background px-3 gap-2 cursor-pointer hover:border-primary/50 transition-colors select-none"
+            >
+              <Calendar className="h-4 w-4 text-muted-foreground shrink-0" />
+              <span className={`text-sm flex-1 ${form.reported_at ? 'text-foreground' : 'text-muted-foreground'}`}>
+                {form.reported_at
+                  ? new Date(form.reported_at + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+                  : 'Select date'
+                }
+              </span>
+              <input
+                ref={dateInputRef}
+                type="date"
+                value={form.reported_at}
+                max={today}
+                onChange={e => setForm(f => ({ ...f, reported_at: e.target.value }))}
+                className="absolute opacity-0 w-0 h-0 pointer-events-none"
+                tabIndex={-1}
+              />
+            </div>
           </div>
         </div>
-
-        {/* Blog write-up */}
         <div className="space-y-2">
           <Label className="flex items-center gap-1.5">
             <BookOpen className="h-3.5 w-3.5 text-primary" />
@@ -461,10 +476,9 @@ function AddFindingModal({ users, onClose, onSaved, token }: {
           <BlogEditor
             value={form.blog_content}
             onChange={v => setForm(f => ({ ...f, blog_content: v }))}
-            placeholder="Write a detailed vulnerability write-up. Use the toolbar above for headings, bullets, code blocks, and quotes…"
+            placeholder="Write a detailed vulnerability write-up…"
           />
         </div>
-
         <div className="flex justify-end gap-3 pt-2">
           <DialogClose asChild>
             <Button variant="outline" onClick={onClose}>Cancel</Button>
@@ -537,8 +551,6 @@ function DetailModal({ finding, onClose, onUpdate, token, isAdmin }: {
         <DialogTitle className="text-base font-semibold leading-snug pr-6">{finding.title}</DialogTitle>
       </DialogHeader>
       <div className="space-y-5 mt-2">
-
-        {/* Badges */}
         <div className="flex flex-wrap gap-2">
           <SeverityBadge severity={finding.severity} />
           <StatusBadge status={finding.status} />
@@ -547,10 +559,7 @@ function DetailModal({ finding, onClose, onUpdate, token, isAdmin }: {
               {finding.cve_id}
             </span>
           )}
-          {finding.category && <Badge variant="secondary" className="text-xs">{finding.category}</Badge>}
         </div>
-
-        {/* Researcher */}
         <div className="flex items-center gap-3">
           <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold ${avatarColor(finding.researcher_name)}`}>
             {initials(finding.researcher_name)}
@@ -563,7 +572,6 @@ function DetailModal({ finding, onClose, onUpdate, token, isAdmin }: {
             </p>
           </div>
         </div>
-
         {finding.description && (
           <div>
             <h4 className="text-sm font-semibold text-primary mb-2">Problem Statement</h4>
@@ -584,8 +592,6 @@ function DetailModal({ finding, onClose, onUpdate, token, isAdmin }: {
             </pre>
           </div>
         )}
-
-        {/* Write-up (read-only display) */}
         {finding.blog_url && (
           <div>
             <h4 className="text-sm font-semibold text-primary mb-3 flex items-center gap-1.5">
@@ -596,15 +602,12 @@ function DetailModal({ finding, onClose, onUpdate, token, isAdmin }: {
             </div>
           </div>
         )}
-
         {finding.rejection_reason && (
           <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
             <h4 className="text-sm font-semibold text-red-400 mb-1">Rejection Reason</h4>
             <p className="text-sm text-muted-foreground">{finding.rejection_reason}</p>
           </div>
         )}
-
-        {/* Timeline */}
         {finding.timeline && finding.timeline.length > 0 && (
           <div>
             <h4 className="text-sm font-semibold text-primary mb-3">Timeline</h4>
@@ -628,8 +631,6 @@ function DetailModal({ finding, onClose, onUpdate, token, isAdmin }: {
             </div>
           </div>
         )}
-
-        {/* Admin: update */}
         {isAdmin && (
           <div className="border-t border-border/50 pt-4 space-y-4">
             <h4 className="text-sm font-semibold text-primary">Update Finding</h4>
@@ -698,7 +699,6 @@ function ResearcherModal({ entry, allFindings, onClose, onOpenFinding }: {
           </div>
         </DialogTitle>
       </DialogHeader>
-
       <div className="space-y-5 mt-2">
         <div className="grid grid-cols-3 gap-3">
           {[
@@ -712,7 +712,6 @@ function ResearcherModal({ entry, allFindings, onClose, onOpenFinding }: {
             </div>
           ))}
         </div>
-
         {cveFindings.length > 0 && (
           <div>
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">CVEs</p>
@@ -726,7 +725,6 @@ function ResearcherModal({ entry, allFindings, onClose, onOpenFinding }: {
             </div>
           </div>
         )}
-
         <div>
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
             Disclosures ({disclosureFindings.length})
@@ -785,9 +783,6 @@ function FindingCard({ f, index, onDetail, onDelete, onWriteup, isAdmin }: {
                   {f.cve_id}
                 </span>
               )}
-              {f.category && <Badge variant="secondary" className="text-xs">{f.category}</Badge>}
-
-              {/* ── Clickable Write-up badge ── */}
               {f.blog_url && (
                 <button
                   type="button"
@@ -815,17 +810,19 @@ function FindingCard({ f, index, onDetail, onDelete, onWriteup, isAdmin }: {
             }
           </div>
         </div>
-
-        <div className="flex items-center gap-2 mt-3">
-          <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold ${avatarColor(f.researcher_name)}`}>
-            {initials(f.researcher_name)}
+        {/* Mobile: two lines — name on first, program+date on second */}
+        <div className="mt-3 flex flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-2">
+          <span className="text-xs text-muted-foreground truncate">{displayName(f)}</span>
+          <div className="flex items-center gap-2">
+            {f.program_name && (
+              <span className="text-xs text-muted-foreground truncate">· {f.program_name}</span>
+            )}
+            {f.reported_at && (
+              <span className="text-xs text-muted-foreground sm:ml-auto whitespace-nowrap">{fmtDate(f.reported_at)}</span>
+            )}
           </div>
-          <span className="text-xs text-muted-foreground">{displayName(f)}</span>
-          {f.program_name && <span className="text-xs text-muted-foreground">· {f.program_name}</span>}
-          {f.reported_at && <span className="text-xs text-muted-foreground ml-auto">{fmtDate(f.reported_at)}</span>}
         </div>
       </div>
-
       {expanded && (
         <div className="px-4 pb-4 pt-2 border-t border-border/50 space-y-4">
           {f.impact && (
@@ -842,8 +839,6 @@ function FindingCard({ f, index, onDetail, onDelete, onWriteup, isAdmin }: {
               </pre>
             </div>
           )}
-
-          {/* Write-up preview inside expanded card */}
           {f.blog_url && (
             <div>
               <div className="flex items-center justify-between mb-2">
@@ -863,7 +858,6 @@ function FindingCard({ f, index, onDetail, onDelete, onWriteup, isAdmin }: {
                 onClick={e => { e.stopPropagation(); onWriteup(f); }}
               >
                 <BlogReader html={f.blog_url} />
-                {/* Fade + click hint overlay */}
                 <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-secondary/60 to-transparent rounded-b-lg flex items-end justify-center pb-2">
                   <span className="text-[10px] text-primary/50 group-hover:text-primary transition-colors font-medium">
                     Click to read full write-up ↗
@@ -872,14 +866,12 @@ function FindingCard({ f, index, onDetail, onDelete, onWriteup, isAdmin }: {
               </div>
             </div>
           )}
-
           {f.rejection_reason && (
             <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
               <h4 className="text-xs font-semibold text-red-400 uppercase tracking-wider mb-1">Rejection Reason</h4>
               <p className="text-sm text-muted-foreground">{f.rejection_reason}</p>
             </div>
           )}
-
           <div className="flex items-center justify-between pt-2 border-t border-border/30">
             <span className="text-xs text-muted-foreground">
               Reported: {fmtDate(f.reported_at || f.created_at)}
@@ -891,6 +883,74 @@ function FindingCard({ f, index, onDetail, onDelete, onWriteup, isAdmin }: {
         </div>
       )}
     </Card>
+  );
+}
+
+// ─── Leaderboard Row (mobile-aware) ──────────────────────────────────────────
+
+function LeaderboardRow({ r, rank, onClick }: {
+  r: LeaderboardEntry;
+  rank: number;
+  onClick: () => void;
+}) {
+  const medals = ['🥇', '🥈', '🥉'];
+  const rankLabel = medals[rank] ?? `#${rank + 1}`;
+
+  return (
+    <div
+      className="grid grid-cols-[2rem_2rem_1fr_4rem] sm:grid-cols-[2.5rem_2.5rem_1fr_8rem_6rem_6rem] items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 border-b border-border/20 last:border-0 cursor-pointer hover:bg-secondary/20 transition-colors"
+      onClick={onClick}
+    >
+      {/* Col 1 — Rank */}
+      <span className="text-sm font-bold text-muted-foreground text-center">
+        {rankLabel}
+      </span>
+
+      {/* Col 2 — Avatar */}
+      <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-[10px] sm:text-xs font-bold ${avatarColor(r.username)}`}>
+        {initials(r.username)}
+      </div>
+
+      {/* Col 3 — Name + username */}
+      <div className="min-w-0">
+        <p className="text-xs sm:text-sm font-semibold truncate leading-tight">
+          {r.full_name ?? `@${r.username}`}
+        </p>
+        <p className="text-[10px] sm:text-xs text-muted-foreground truncate">@{r.username}</p>
+      </div>
+
+      {/* Mobile: stacked disc + CVE + pts | Desktop: three separate columns */}
+      <div className="flex flex-col items-end gap-0.5 sm:hidden">
+        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-primary/10 text-primary border border-primary/20">
+          {r.disclosure_count}d
+        </span>
+        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-red-500/10 text-red-400 border border-red-500/20">
+          {r.cve_count}c
+        </span>
+        <span className="text-[10px] font-bold text-primary">{r.total_points}pt</span>
+      </div>
+
+      {/* Col 4 — Disclosures (desktop only) */}
+      <div className="hidden sm:flex justify-center">
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20 whitespace-nowrap">
+          <ShieldCheck className="h-3 w-3" />
+          {r.disclosure_count} disc
+        </span>
+      </div>
+
+      {/* Col 5 — CVEs (desktop only) */}
+      <div className="hidden sm:flex justify-center">
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-500/10 text-red-400 border border-red-500/20 whitespace-nowrap">
+          {r.cve_count} CVE
+        </span>
+      </div>
+
+      {/* Col 6 — Points (desktop only) */}
+      <div className="hidden sm:block text-right">
+        <p className="text-sm font-bold text-primary leading-tight">{r.total_points}</p>
+        <p className="text-[10px] text-muted-foreground">pts</p>
+      </div>
+    </div>
   );
 }
 
@@ -964,8 +1024,6 @@ export default function WallofFame() {
   const tabFindings: Record<string, HofFinding[]> = {
     all: allFindings, disclosure: disclosureFindings, cves: cveFindings,
   };
-
-  const medals = ['🥇', '🥈', '🥉'];
 
   const tabs: { key: TabType; label: string; icon: React.ReactNode; count?: number }[] = [
     ...(isAdmin ? [{ key: 'all' as TabType, label: 'All Findings', icon: <Bug className="h-3.5 w-3.5" />, count: allFindings.length }] : []),
@@ -1043,15 +1101,25 @@ export default function WallofFame() {
           ))}
         </div>
 
-        {/* Leaderboard */}
+        {/* ── Leaderboard ── */}
         {tab === 'leaderboard' && (
           <div className="space-y-3">
-            <div className="flex gap-4 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-primary inline-block" />Disclosure = 10 pts</span>
-              <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-400 inline-block" />CVE = 50 pts</span>
+            {/* Legend */}
+            <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-primary inline-block" />
+                Disclosure = 10 pts
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-red-400 inline-block" />
+                CVE = 50 pts
+              </span>
             </div>
+
             {loading ? (
-              <Card className="p-12 text-center"><p className="text-sm text-muted-foreground">Loading…</p></Card>
+              <Card className="p-12 text-center">
+                <p className="text-sm text-muted-foreground">Loading…</p>
+              </Card>
             ) : leaderboard.length === 0 ? (
               <Card className="p-12 text-center">
                 <Trophy className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
@@ -1059,43 +1127,26 @@ export default function WallofFame() {
               </Card>
             ) : (
               <div className="rounded-lg border border-border/50 overflow-hidden">
-                <div className="grid grid-cols-[2rem_1fr_7rem_7rem_6rem] gap-4 px-4 py-2.5 bg-secondary/40 border-b border-border/50">
-                  <span className="text-xs font-semibold text-muted-foreground">#</span>
+                {/* Header */}
+                <div className="grid grid-cols-[2rem_2rem_1fr_4rem] sm:grid-cols-[2.5rem_2.5rem_1fr_8rem_6rem_6rem] gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 bg-secondary/40 border-b border-border/50">
+                  <span className="text-xs font-semibold text-muted-foreground text-center">#</span>
+                  <span /> {/* avatar spacer */}
                   <span className="text-xs font-semibold text-muted-foreground">Researcher</span>
-                  <span className="text-xs font-semibold text-muted-foreground text-center">Disclosures</span>
-                  <span className="text-xs font-semibold text-muted-foreground text-center">CVEs</span>
-                  <span className="text-xs font-semibold text-muted-foreground text-right">Points</span>
+                  {/* mobile: single "Stats" label; desktop: three separate labels */}
+                  <span className="text-xs font-semibold text-muted-foreground text-right sm:hidden">Stats</span>
+                  <span className="hidden sm:block text-xs font-semibold text-muted-foreground text-center">Disclosures</span>
+                  <span className="hidden sm:block text-xs font-semibold text-muted-foreground text-center">CVEs</span>
+                  <span className="hidden sm:block text-xs font-semibold text-muted-foreground text-right">Points</span>
                 </div>
+
+                {/* Rows — shared component handles both layouts */}
                 {leaderboard.map((r, i) => (
-                  <div key={r.user_id}
-                    className="grid grid-cols-[2rem_1fr_7rem_7rem_6rem] gap-4 px-4 py-3 border-b border-border/20 last:border-0 cursor-pointer hover:bg-secondary/20 transition-colors items-center"
-                    onClick={() => setProfileEntry(r)}>
-                    <span className="text-sm font-bold text-muted-foreground">{medals[i] ?? `#${i + 1}`}</span>
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${avatarColor(r.username)}`}>
-                        {initials(r.username)}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold truncate">{r.full_name ?? `@${r.username}`}</p>
-                        <p className="text-xs text-muted-foreground">@{r.username}</p>
-                      </div>
-                      <Badge variant="secondary" className="text-xs capitalize hidden sm:flex flex-shrink-0">{r.role}</Badge>
-                    </div>
-                    <div className="text-center">
-                      <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
-                        {r.disclosure_count}
-                      </span>
-                    </div>
-                    <div className="text-center">
-                      <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-red-500/10 text-red-400 border border-red-500/20">
-                        {r.cve_count}
-                      </span>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-bold text-primary">{r.total_points}</p>
-                      <p className="text-[10px] text-muted-foreground">pts</p>
-                    </div>
-                  </div>
+                  <LeaderboardRow
+                    key={r.user_id}
+                    r={r}
+                    rank={i}
+                    onClick={() => setProfileEntry(r)}
+                  />
                 ))}
               </div>
             )}
@@ -1106,7 +1157,9 @@ export default function WallofFame() {
         {tab !== 'leaderboard' && (
           <div className="space-y-3">
             {loading ? (
-              <Card className="p-12 text-center"><p className="text-sm text-muted-foreground">Loading findings…</p></Card>
+              <Card className="p-12 text-center">
+                <p className="text-sm text-muted-foreground">Loading findings…</p>
+              </Card>
             ) : tabFindings[tab].length === 0 ? (
               <Card className="p-12 text-center">
                 <ShieldCheck className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
@@ -1140,7 +1193,7 @@ export default function WallofFame() {
         )}
       </Dialog>
 
-      {/* ── Write-up zoom modal ── */}
+      {/* Write-up zoom modal */}
       <Dialog open={!!writeupFinding} onOpenChange={open => !open && setWriteupFinding(null)}>
         {writeupFinding && (
           <WriteupModal finding={writeupFinding} onClose={() => setWriteupFinding(null)} />

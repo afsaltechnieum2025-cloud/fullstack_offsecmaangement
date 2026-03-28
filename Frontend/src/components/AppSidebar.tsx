@@ -15,9 +15,14 @@ import {
   Network,
   ShieldCheck,
   Menu,
-  Trophy
+  Trophy,
+  Crown,
+  Briefcase,
+  Shield,
+  User
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -74,9 +79,21 @@ export default function AppSidebar() {
     (item) => role && item.roles.includes(role)
   );
 
-  // On mobile: sidebar is fixed and overlays the page
-  // On desktop: sidebar is sticky and stays in flow
-  const isOpen = !collapsed; // alias for readability
+  // Get role icon
+  const getRoleIcon = (userRole: string | null) => {
+    switch (userRole) {
+      case 'admin':
+        return <Crown className="h-4 w-4 text-primary" />;
+      case 'manager':
+        return <Briefcase className="h-4 w-4 text-blue-500" />;
+      case 'tester':
+        return <Shield className="h-4 w-4 text-emerald-500" />;
+      default:
+        return <User className="h-4 w-4 text-muted-foreground" />;
+    }
+  };
+
+  const isOpen = !collapsed;
 
   return (
     <>
@@ -126,7 +143,6 @@ export default function AppSidebar() {
               <div className="flex flex-col leading-tight">
                 <span className="font-bold text-sm text-gradient">Technieum</span>
                 <span className="font-semibold text-xs text-muted-foreground">OffSec Portal</span>
-                {/* <span className="font-semibold text-xs text-muted-foreground">Management Portal</span> */}
               </div>
             </Link>
           )}
@@ -178,7 +194,10 @@ export default function AppSidebar() {
               </div>
               {!collapsed && (
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{username}</p>
+                  <div className="flex items-center gap-1">
+                    <p className="text-sm font-medium truncate">{username}</p>
+                    {getRoleIcon(role)}
+                  </div>
                   <p className="text-xs text-muted-foreground capitalize">{role}</p>
                 </div>
               )}

@@ -9,9 +9,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import {
     Loader2, FolderKanban, Bug, Award,
     History, Calendar, Mail, Shield, TrendingUp,
-    XCircle, Info, FileText, Crown, Briefcase
+    XCircle, Info, FileText, Crown, Briefcase, ShieldCheck
 } from 'lucide-react';
-import { Progress } from '@/components/ui/progress';
 import { toast } from 'sonner';
 import {
     Document, Packer, Paragraph, TextRun,
@@ -77,6 +76,57 @@ const orangeTableBorders = {
     right:            { style: BorderStyle.SINGLE, size: 2, color: 'f97316' },
     insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: '334155' },
     insideVertical:   { style: BorderStyle.SINGLE, size: 1, color: '334155' },
+};
+
+/* ─── Badge helpers — mirrors Users.tsx getRoleBadge exactly ────────────── */
+
+/**
+ * Severity badges — matches the visual weight used for role badges in Users.tsx:
+ *   critical  → primary style  (solid orange, like "Admin")
+ *   high      → primary/15     (tinted orange, like "Manager")
+ *   medium    → primary/10     (lighter tint)
+ *   low       → secondary      (muted, like "Tester")
+ *   info      → secondary      (muted)
+ */
+const getSeverityBadgeClass = (severity: string): string => ({
+    critical:      'bg-primary text-primary-foreground border-primary shadow-sm shadow-primary/30',
+    high:          'bg-primary/15 text-primary border-primary/40',
+    medium:        'bg-primary/10 text-primary border-primary/30',
+    low:           'bg-secondary text-muted-foreground border-border',
+    info:          'bg-secondary text-muted-foreground border-border',
+    informational: 'bg-secondary text-muted-foreground border-border',
+}[severity?.toLowerCase()] ?? 'bg-secondary text-muted-foreground border-border');
+
+/**
+ * Status badges — uses the same semantic colour language the rest of the app uses.
+ * Active / resolved / accepted → green tint
+ * In-progress / submitted / triaged → blue / purple tints
+ * Open / rejected / overdue → destructive tint
+ * Pending → yellow tint
+ * Duplicate → secondary (muted)
+ */
+const getStatusBadgeClass = (status: string): string => ({
+    open:        'bg-destructive/15 text-destructive border-destructive/30',
+    in_progress: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+    resolved:    'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+    accepted:    'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+    rejected:    'bg-destructive/15 text-destructive border-destructive/30',
+    submitted:   'bg-blue-500/15 text-blue-400 border-blue-500/30',
+    triaged:     'bg-purple-500/15 text-purple-400 border-purple-500/30',
+    duplicate:   'bg-secondary text-muted-foreground border-border',
+    active:      'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+    completed:   'bg-blue-500/15 text-blue-400 border-blue-500/30',
+    pending:     'bg-yellow-500/15 text-yellow-400 border-yellow-500/30',
+    overdue:     'bg-destructive/15 text-destructive border-destructive/30',
+}[status?.toLowerCase()] ?? 'bg-secondary text-muted-foreground border-border');
+
+/* Severity progress-bar colours — same hue family as badge colours */
+const severityBarClass: Record<string, string> = {
+    critical: 'bg-primary',
+    high:     'bg-primary/80',
+    medium:   'bg-primary/60',
+    low:      'bg-primary/30',
+    info:     'bg-muted-foreground/40',
 };
 
 /* ─── Component ──────────────────────────────────────────────────────────── */
@@ -264,37 +314,23 @@ export function UserProfileDialog({
         }
     };
 
-    /* ── UI helpers ──────────────────────────────────────────────────────── */
-    const getSeverityColor = (s: string) => ({
-        critical:      'bg-red-500/15 text-red-400 border-red-500/30',
-        high:          'bg-orange-500/15 text-orange-400 border-orange-500/30',
-        medium:        'bg-orange-400/15 text-orange-300 border-orange-400/30',
-        low:           'bg-yellow-500/15 text-yellow-400 border-yellow-500/30',
-        info:          'bg-slate-700 text-slate-400 border-slate-600',
-        informational: 'bg-slate-700 text-slate-400 border-slate-600',
-    }[s?.toLowerCase()] ?? 'bg-slate-700 text-slate-400 border-slate-600');
+    /* ── Role icon — white variant for use inside the orange header ─────── */
+    const getRoleIcon = (role: string) => {
+        switch (role?.toLowerCase()) {
+            case 'admin':   return <Crown       className="h-4 w-4 text-white/90" />;
+            case 'manager': return <Briefcase   className="h-4 w-4 text-white/90" />;
+            case 'tester':  return <ShieldCheck className="h-4 w-4 text-white/90" />;
+            default:        return <Shield      className="h-4 w-4 text-white/90" />;
+        }
+    };
 
-    const getStatusColor = (s: string) => ({
-        open:        'bg-red-500/15 text-red-400 border-red-500/30',
-        in_progress: 'bg-orange-500/15 text-orange-400 border-orange-500/30',
-        resolved:    'bg-green-500/15 text-green-400 border-green-500/30',
-        accepted:    'bg-green-500/15 text-green-400 border-green-500/30',
-        rejected:    'bg-red-500/15 text-red-400 border-red-500/30',
-        submitted:   'bg-blue-500/15 text-blue-400 border-blue-500/30',
-        triaged:     'bg-purple-500/15 text-purple-400 border-purple-500/30',
-        duplicate:   'bg-slate-700 text-slate-400 border-slate-600',
-        active:      'bg-green-500/15 text-green-400 border-green-500/30',
-        completed:   'bg-blue-500/15 text-blue-400 border-blue-500/30',
-        pending:     'bg-yellow-500/15 text-yellow-400 border-yellow-500/30',
-        overdue:     'bg-red-500/15 text-red-400 border-red-500/30',
-    }[s?.toLowerCase()] ?? 'bg-slate-700 text-slate-400 border-slate-600');
-
+    /* ── Timeline event icon ─────────────────────────────────────────────── */
     const getEventIcon = (t: string) => ({
-        finding_created:  <Bug className="h-4 w-4 text-orange-400" />,
-        finding_retested: <History className="h-4 w-4 text-blue-400" />,
-        hof_submitted:    <Award className="h-4 w-4 text-yellow-400" />,
+        finding_created:  <Bug         className="h-4 w-4 text-primary" />,
+        finding_retested: <History     className="h-4 w-4 text-blue-400" />,
+        hof_submitted:    <Award       className="h-4 w-4 text-yellow-400" />,
         project_assigned: <FolderKanban className="h-4 w-4 text-purple-400" />,
-    }[t] ?? <Info className="h-4 w-4 text-slate-400" />);
+    }[t] ?? <Info className="h-4 w-4 text-muted-foreground" />);
 
     const formatDate = (d: string) => {
         if (!d) return 'N/A';
@@ -310,24 +346,26 @@ export function UserProfileDialog({
                 w-screen h-screen rounded-none p-0 overflow-hidden
                 sm:w-[95vw] sm:h-auto sm:max-h-[90vh] sm:rounded-xl
                 md:max-w-4xl lg:max-w-5xl
-                bg-[#0f1117] border border-[#1e2433]
+                bg-background border border-border
             ">
-                {/* ── Header ── orange gradient matching portal's accent ── */}
-                <div className="
-                    bg-gradient-to-r from-[#f97316] to-[#ea580c]
-                    px-4 py-4 sm:px-6 sm:py-5 flex-shrink-0
-                ">
+                {/* ── Header — gradient-primary matching the portal's Add User button ── */}
+                <div className="gradient-primary px-4 py-4 sm:px-6 sm:py-5 flex-shrink-0">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="min-w-0">
+                            {/* Logo row — white only, sits on orange gradient */}
                             <div className="flex items-center gap-2 mb-1">
-                                <div className="h-7 w-7 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0">
+                                {/* <div className="h-7 w-7 rounded-md bg-white/20 border border-white/30 flex items-center justify-center flex-shrink-0">
                                     <Shield className="h-4 w-4 text-white" />
-                                </div>
-                                <span className="text-white/80 text-xs font-mono tracking-widest">TECHNIEUM</span>
+                                </div> */}
+                                <span className="text-white font-bold text-xs tracking-[0.18em] uppercase">
+                                    Technieum
+                                </span>
                             </div>
+
                             <DialogTitle className="text-xl sm:text-2xl lg:text-3xl font-bold text-white leading-tight truncate">
                                 {displayName}
                             </DialogTitle>
+
                             <DialogDescription asChild>
                                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-white/80 text-xs sm:text-sm">
                                     <span className="flex items-center gap-1">
@@ -339,6 +377,15 @@ export function UserProfileDialog({
                                         <Calendar className="h-3 w-3 flex-shrink-0" />
                                         {profile?.user.created_at && `Since ${formatDate(profile.user.created_at)}`}
                                     </span>
+                                    {profile?.user.role && (
+                                        <>
+                                            <span className="hidden sm:inline text-white/40">•</span>
+                                            <span className="flex items-center gap-1 capitalize font-medium text-white/90">
+                                                {getRoleIcon(profile.user.role)}
+                                                {profile.user.role}
+                                            </span>
+                                        </>
+                                    )}
                                 </div>
                             </DialogDescription>
                         </div>
@@ -362,7 +409,7 @@ export function UserProfileDialog({
                 {/* ── Body ─────────────────────────────────────────────── */}
                 {isLoading ? (
                     <div className="flex items-center justify-center h-64">
-                        <Loader2 className="h-8 w-8 animate-spin text-orange-500" />
+                        <Loader2 className="h-8 w-8 animate-spin text-primary" />
                     </div>
                 ) : profile ? (
                     <ScrollArea className="h-[calc(100vh-130px)] sm:h-[calc(90vh-130px)]">
@@ -376,49 +423,39 @@ export function UserProfileDialog({
                                     { icon: Award,        label: 'Accepted',  value: profile.stats.acceptedFindings },
                                     { icon: Shield,       label: 'CVEs',      value: profile.stats.cvesCount },
                                 ].map(({ icon: Icon, label, value }) => (
-                                    <div key={label} className="
-                                        p-3 sm:p-4 rounded-lg
-                                        bg-[#161b27] border border-[#1e2a3a]
-                                        hover:border-orange-500/30 hover:shadow-[0_0_15px_rgba(249,115,22,0.07)]
-                                        transition-all duration-200
-                                    ">
+                                    <div
+                                        key={label}
+                                        className="p-3 sm:p-4 rounded-lg bg-secondary/50 border border-border hover:border-primary/30 hover:shadow-lg transition-all duration-200"
+                                    >
                                         <div className="flex items-center justify-between">
-                                            <Icon className="h-6 w-6 sm:h-7 sm:w-7 text-orange-500" />
-                                            <span className="text-xl sm:text-2xl font-bold text-orange-400">
+                                            <Icon className="h-6 w-6 sm:h-7 sm:w-7 text-primary" />
+                                            <span className="text-xl sm:text-2xl font-bold text-primary">
                                                 {value}
                                             </span>
                                         </div>
-                                        <p className="text-xs sm:text-sm text-slate-400 mt-2">{label}</p>
+                                        <p className="text-xs sm:text-sm text-muted-foreground mt-2">{label}</p>
                                     </div>
                                 ))}
                             </div>
 
                             {/* ── Severity distribution ─────────────────── */}
-                            <div className="rounded-lg bg-[#161b27] border border-[#1e2a3a] p-4">
-                                <h3 className="font-semibold mb-3 flex items-center gap-2 text-orange-400 text-sm sm:text-base">
+                            <div className="rounded-lg bg-secondary/50 border border-border p-4">
+                                <h3 className="font-semibold mb-3 flex items-center gap-2 text-primary text-sm sm:text-base">
                                     <TrendingUp className="h-4 w-4" />
                                     Severity Distribution
                                 </h3>
                                 <div className="space-y-3">
                                     {(Object.entries(profile.stats.severityBreakdown) as [string, number][]).map(([severity, count]) => {
                                         const max = Math.max(...Object.values(profile.stats.severityBreakdown), 1);
-                                        const barColors: Record<string, string> = {
-                                            critical: 'bg-red-500',
-                                            high:     'bg-orange-500',
-                                            medium:   'bg-orange-400',
-                                            low:      'bg-yellow-400',
-                                            info:     'bg-slate-500',
-                                        };
                                         return count > 0 && (
                                             <div key={severity} className="space-y-1">
                                                 <div className="flex justify-between text-xs sm:text-sm">
-                                                    <span className="capitalize text-slate-300 font-medium">{severity}</span>
-                                                    <span className="font-bold text-slate-200">{count}</span>
+                                                    <span className="capitalize text-foreground font-medium">{severity}</span>
+                                                    <span className="font-bold text-foreground">{count}</span>
                                                 </div>
-                                                {/* Custom coloured bar instead of shadcn Progress */}
-                                                <div className="h-1.5 sm:h-2 w-full rounded-full bg-[#1e2a3a]">
+                                                <div className="h-1.5 sm:h-2 w-full rounded-full bg-border">
                                                     <div
-                                                        className={`h-full rounded-full transition-all duration-500 ${barColors[severity] ?? 'bg-orange-500'}`}
+                                                        className={`h-full rounded-full transition-all duration-500 ${severityBarClass[severity] ?? 'bg-primary'}`}
                                                         style={{ width: `${(count / max) * 100}%` }}
                                                     />
                                                 </div>
@@ -430,10 +467,7 @@ export function UserProfileDialog({
 
                             {/* ── Tabs ─────────────────────────────────── */}
                             <Tabs defaultValue="projects" className="w-full">
-                                <TabsList className="
-                                    grid grid-cols-2 gap-1 h-auto p-1 sm:grid-cols-4
-                                    bg-[#161b27] border border-[#1e2a3a] rounded-lg
-                                ">
+                                <TabsList className="grid grid-cols-2 gap-1 h-auto p-1 sm:grid-cols-4 bg-secondary/50 border border-border rounded-lg">
                                     {[
                                         { value: 'projects', label: 'Projects',     count: profile.projects.length },
                                         { value: 'findings', label: 'Findings',     count: profile.findings.length },
@@ -444,8 +478,8 @@ export function UserProfileDialog({
                                             key={value}
                                             value={value}
                                             className="
-                                                data-[state=active]:bg-orange-500 data-[state=active]:text-white
-                                                text-slate-400 hover:text-slate-200
+                                                data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground
+                                                text-muted-foreground hover:text-foreground
                                                 text-xs sm:text-sm py-1.5 sm:py-2
                                                 flex flex-col sm:flex-row items-center gap-0.5 sm:gap-1
                                                 rounded-md transition-all
@@ -462,23 +496,23 @@ export function UserProfileDialog({
                                     {profile.projects.length === 0
                                         ? <EmptyState icon={FolderKanban} message="No projects assigned" />
                                         : profile.projects.map((project, idx) => (
-                                            <DarkCard key={idx}>
+                                            <ProfileCard key={idx}>
                                                 <div className="flex items-start justify-between gap-2">
                                                     <div className="min-w-0">
-                                                        <h4 className="font-medium text-orange-400 truncate text-sm sm:text-base">{project.name}</h4>
-                                                        <p className="text-xs sm:text-sm text-slate-400">Client: {project.client}</p>
+                                                        <h4 className="font-medium text-primary truncate text-sm sm:text-base">{project.name}</h4>
+                                                        <p className="text-xs sm:text-sm text-muted-foreground">Client: {project.client}</p>
                                                     </div>
-                                                    <Badge className={`${getStatusColor(project.status)} text-xs flex-shrink-0`}>
+                                                    <Badge className={`${getStatusBadgeClass(project.status)} text-xs flex-shrink-0 border`}>
                                                         {project.status}
                                                     </Badge>
                                                 </div>
-                                                <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-500">
+                                                <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
                                                     <span>Assigned: {formatDate(project.assigned_at)}</span>
                                                     {project.start_date && (
                                                         <span>Period: {formatDate(project.start_date)} – {formatDate(project.end_date) || 'Ongoing'}</span>
                                                     )}
                                                 </div>
-                                            </DarkCard>
+                                            </ProfileCard>
                                         ))
                                     }
                                 </TabsContent>
@@ -488,24 +522,24 @@ export function UserProfileDialog({
                                     {profile.findings.length === 0
                                         ? <EmptyState icon={Bug} message="No findings reported" />
                                         : profile.findings.map((finding, idx) => (
-                                            <DarkCard key={idx}>
+                                            <ProfileCard key={idx}>
                                                 <div className="flex items-start justify-between gap-2">
                                                     <div className="min-w-0 flex-1">
-                                                        <h4 className="font-medium text-orange-400 text-sm sm:text-base leading-snug">{finding.title}</h4>
-                                                        <p className="text-xs sm:text-sm text-slate-400 mt-0.5">Project: {finding.project_name}</p>
+                                                        <h4 className="font-medium text-primary text-sm sm:text-base leading-snug">{finding.title}</h4>
+                                                        <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">Project: {finding.project_name}</p>
                                                     </div>
                                                     <div className="flex flex-col sm:flex-row gap-1 flex-shrink-0">
-                                                        <Badge className={`${getSeverityColor(finding.severity)} text-xs`}>{finding.severity}</Badge>
-                                                        <Badge className={`${getStatusColor(finding.status)} text-xs`}>{finding.status}</Badge>
+                                                        <Badge className={`${getSeverityBadgeClass(finding.severity)} text-xs border`}>{finding.severity}</Badge>
+                                                        <Badge className={`${getStatusBadgeClass(finding.status)} text-xs border`}>{finding.status}</Badge>
                                                     </div>
                                                 </div>
                                                 {finding.cvss_score && (
-                                                    <p className="mt-2 text-xs sm:text-sm text-slate-400">
-                                                        <span className="font-medium text-slate-300">CVSS:</span> {finding.cvss_score}
+                                                    <p className="mt-2 text-xs sm:text-sm text-muted-foreground">
+                                                        <span className="font-medium text-foreground">CVSS:</span> {finding.cvss_score}
                                                     </p>
                                                 )}
-                                                <p className="mt-1 text-xs text-slate-500">Reported: {formatDate(finding.created_at)}</p>
-                                            </DarkCard>
+                                                <p className="mt-1 text-xs text-muted-foreground">Reported: {formatDate(finding.created_at)}</p>
+                                            </ProfileCard>
                                         ))
                                     }
                                 </TabsContent>
@@ -515,35 +549,35 @@ export function UserProfileDialog({
                                     {profile.hofFindings.length === 0
                                         ? <EmptyState icon={Award} message="No Hall of Fame findings" />
                                         : profile.hofFindings.map((finding, idx) => (
-                                            <DarkCard key={idx}>
+                                            <ProfileCard key={idx}>
                                                 <div className="flex items-start justify-between gap-2">
                                                     <div className="min-w-0 flex-1">
-                                                        <h4 className="font-medium text-orange-400 text-sm sm:text-base">{finding.title}</h4>
-                                                        <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
+                                                        <h4 className="font-medium text-primary text-sm sm:text-base">{finding.title}</h4>
+                                                        <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
                                                             Project: {finding.project_name || 'External Program'}
                                                         </p>
                                                     </div>
                                                     <div className="flex flex-col sm:flex-row gap-1 flex-shrink-0">
-                                                        <Badge className={`${getSeverityColor(finding.severity)} text-xs`}>{finding.severity}</Badge>
-                                                        <Badge className={`${getStatusColor(finding.status)} text-xs`}>{finding.status}</Badge>
+                                                        <Badge className={`${getSeverityBadgeClass(finding.severity)} text-xs border`}>{finding.severity}</Badge>
+                                                        <Badge className={`${getStatusBadgeClass(finding.status)} text-xs border`}>{finding.status}</Badge>
                                                     </div>
                                                 </div>
                                                 {finding.cve_id && (
-                                                    <p className="mt-2 text-xs sm:text-sm text-slate-400">
-                                                        <span className="font-medium text-slate-300">CVE ID:</span> {finding.cve_id}
+                                                    <p className="mt-2 text-xs sm:text-sm text-muted-foreground">
+                                                        <span className="font-medium text-foreground">CVE ID:</span> {finding.cve_id}
                                                     </p>
                                                 )}
-                                                <div className="mt-1 flex flex-wrap gap-3 text-xs text-slate-500">
+                                                <div className="mt-1 flex flex-wrap gap-3 text-xs text-muted-foreground">
                                                     <span>Reported: {formatDate(finding.reported_at)}</span>
                                                     {finding.resolved_at && <span>Resolved: {formatDate(finding.resolved_at)}</span>}
                                                 </div>
                                                 {finding.rejection_reason && (
-                                                    <div className="mt-2 text-xs text-red-400 bg-red-500/10 p-2 rounded border border-red-500/20">
+                                                    <div className="mt-2 text-xs text-destructive bg-destructive/10 p-2 rounded border border-destructive/20">
                                                         <XCircle className="h-3 w-3 inline mr-1" />
                                                         {finding.rejection_reason}
                                                     </div>
                                                 )}
-                                            </DarkCard>
+                                            </ProfileCard>
                                         ))
                                     }
                                 </TabsContent>
@@ -555,32 +589,32 @@ export function UserProfileDialog({
                                         : (
                                             <div className="space-y-3">
                                                 {profile.timelineEvents.map((event, idx) => (
-                                                    <DarkCard key={idx}>
+                                                    <ProfileCard key={idx}>
                                                         {/* Icon + badge row */}
                                                         <div className="flex items-center justify-between gap-2 mb-2">
                                                             <div className="flex items-center gap-2">
-                                                                <div className="h-7 w-7 rounded-full bg-orange-500/10 border border-orange-500/20 flex items-center justify-center flex-shrink-0">
+                                                                <div className="h-7 w-7 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0">
                                                                     {getEventIcon(event.event_type)}
                                                                 </div>
                                                                 <Badge
                                                                     variant="outline"
-                                                                    className="text-[10px] border-orange-500/30 text-orange-400 px-1.5 py-0"
+                                                                    className="text-[10px] border-primary/30 text-primary px-1.5 py-0"
                                                                 >
                                                                     {event.event_type.replace(/_/g, ' ').toUpperCase()}
                                                                 </Badge>
                                                             </div>
-                                                            <p className="text-xs text-slate-500 flex-shrink-0">
+                                                            <p className="text-xs text-muted-foreground flex-shrink-0">
                                                                 {formatDate(event.event_date)}
                                                             </p>
                                                         </div>
                                                         {/* Title + context */}
-                                                        <p className="font-medium text-orange-400 text-sm leading-snug">
+                                                        <p className="font-medium text-primary text-sm leading-snug">
                                                             {event.title}
                                                         </p>
                                                         {event.context && (
-                                                            <p className="text-xs text-slate-400 mt-0.5">in {event.context}</p>
+                                                            <p className="text-xs text-muted-foreground mt-0.5">in {event.context}</p>
                                                         )}
-                                                    </DarkCard>
+                                                    </ProfileCard>
                                                 ))}
                                             </div>
                                         )
@@ -595,13 +629,13 @@ export function UserProfileDialog({
     );
 }
 
-/* ─── Reusable dark card (matches portal card bg) ────────────────────────── */
-function DarkCard({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+/* ─── Profile card — uses design-system tokens like the user cards ───────── */
+function ProfileCard({ children, className = '' }: { children: React.ReactNode; className?: string }) {
     return (
         <div className={`
             p-3 sm:p-4 rounded-lg
-            bg-[#161b27] border border-[#1e2a3a]
-            hover:border-orange-500/25 hover:shadow-[0_0_12px_rgba(249,115,22,0.06)]
+            bg-secondary/50 border border-border
+            hover:border-primary/30 hover:shadow-lg
             transition-all duration-200
             ${className}
         `}>
@@ -613,7 +647,7 @@ function DarkCard({ children, className = '' }: { children: React.ReactNode; cla
 /* ─── Empty state ────────────────────────────────────────────────────────── */
 function EmptyState({ icon: Icon, message }: { icon: any; message: string }) {
     return (
-        <div className="text-center py-10 text-slate-500">
+        <div className="text-center py-10 text-muted-foreground">
             <Icon className="h-10 w-10 sm:h-12 sm:w-12 mx-auto mb-2 opacity-30" />
             <p className="text-sm">{message}</p>
         </div>
