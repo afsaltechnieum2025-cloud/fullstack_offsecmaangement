@@ -8,7 +8,7 @@ const notificationsRoutes = require('./routes/notifications');        // ← ADD
 
 // CORS configuration
 app.use(cors({ 
-  origin: ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:8080', 'http://16.171.148.233'],
+  origin: ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:8080', 'http://16.170.204.151'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'Pragma'] // ← ADD last two
