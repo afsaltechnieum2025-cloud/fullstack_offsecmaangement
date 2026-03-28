@@ -296,12 +296,12 @@ export default function Findings() {
 
   // Simplified color scheme - only primary and critical red
   const SEVERITY_STYLES: Record<Severity, { bg: string; text: string; border: string }> = {
-    Critical: { bg: 'bg-red-500/10', text: 'text-red-600 dark:text-red-400', border: 'border-red-500/30' },
-    High: { bg: 'bg-primary/10', text: 'text-primary', border: 'border-primary/30' },
-    Medium: { bg: 'bg-primary/8', text: 'text-primary', border: 'border-primary/25' },
-    Low: { bg: 'bg-primary/5', text: 'text-primary', border: 'border-primary/20' },
-    Informational: { bg: 'bg-primary/3', text: 'text-primary/80', border: 'border-primary/15' },
-  };
+  Critical:      { bg: 'bg-red-500/10',     text: 'text-red-500',        border: 'border-red-500/30'     },
+  High:          { bg: 'bg-orange-500/10',  text: 'text-orange-500',     border: 'border-orange-500/30'  },
+  Medium:        { bg: 'bg-orange-400/10',  text: 'text-orange-400',     border: 'border-orange-400/30'  },
+  Low:           { bg: 'bg-primary/5',      text: 'text-primary/50',     border: 'border-primary/15'     },
+  Informational: { bg: 'bg-muted',          text: 'text-muted-foreground', border: 'border-border'       },
+};
 
   const getSeverityBadge = (severity: string) => {
     const normalized = normalizeSeverity(severity);
@@ -314,11 +314,18 @@ export default function Findings() {
   };
 
   const getSeverityIcon = (severity: string) => {
-    const normalized = normalizeSeverity(severity);
-    return (
-      <AlertTriangle className={`h-5 w-5 ${normalized === 'Critical' ? 'text-red-500' : 'text-primary'}`} />
-    );
+  const normalized = normalizeSeverity(severity);
+  const iconColors: Record<Severity, string> = {
+    Critical:      'text-red-500',
+    High:          'text-orange-500',
+    Medium:        'text-orange-400',
+    Low:           'text-primary/50',
+    Informational: 'text-muted-foreground',
   };
+  return (
+    <AlertTriangle className={`h-5 w-5 ${iconColors[normalized]}`} />
+  );
+};
 
   const getRetestBadge = (status: string | null) => {
     if (!status) return null;
