@@ -3,23 +3,10 @@ const express = require('express');
 const router  = express.Router();
 const db      = require('../db');
 const multer  = require('multer');
-const path    = require('path');
-const fs      = require('fs');
 
-// ─── Multer setup for POC image uploads ───────────────────────
-const uploadDir = path.join(__dirname, '..', 'uploads', 'pocs');
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadDir),
-  filename: (_req, file, cb) => {
-    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    cb(null, `${unique}${path.extname(file.originalname)}`);
-  },
-});
-
+// ─── Multer setup — store in memory, not disk ───────────────
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const allowed = ['image/jpeg', 'image/jpg', 'image/png'];
@@ -58,7 +45,7 @@ router.get('/', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-//  POST /api/findings (UPDATED with new fields)
+//  POST /api/findings
 // ─────────────────────────────────────────────────────────────
 router.post('/', async (req, res) => {
   const {
@@ -74,17 +61,13 @@ router.post('/', async (req, res) => {
     affected_component = null,
     cwe_id             = null,
     created_by         = null,
-    // NEW FIELDS
-    finding_type       = 'pentest',  // Default to pentest for backward compatibility
-    // SAST specific fields
+    finding_type       = 'pentest',
     file_path          = null,
     line_number        = null,
     tool_name          = null,
-    // ASM specific fields
     asset_type         = null,
     port               = null,
     protocol           = null,
-    // LLM specific fields
     llm_category       = null,
     prompt_example     = null,
   } = req.body;
@@ -94,20 +77,15 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ message: 'project_id, title, and severity are required' });
   }
   if (!validSeverities.includes(String(severity).toLowerCase())) {
-    return res.status(400).json({ message: `Invalid severity value: "${severity}". Must be one of: Critical, High, Medium, Low, Informational` });
+    return res.status(400).json({ message: `Invalid severity value: "${severity}".` });
   }
-  
-  // Normalize to title case before storing
+
   const severityNormalized = String(severity).charAt(0).toUpperCase() + String(severity).slice(1).toLowerCase();
-  
-  // Validate finding_type
-  const validFindingTypes = ['pentest', 'sast', 'asm', 'llm'];
-  const normalizedFindingType = validFindingTypes.includes(finding_type) ? finding_type : 'pentest';
+  const validFindingTypes  = ['pentest', 'sast', 'asm', 'llm'];
+  const normalizedType     = validFindingTypes.includes(finding_type) ? finding_type : 'pentest';
 
   try {
     const [[{ newId }]] = await db.query(`SELECT UUID() AS newId`);
-    
-    // Insert with all new fields
     await db.query(
       `INSERT INTO findings
         (id, project_id, title, description, severity, cvss_score, status,
@@ -117,10 +95,9 @@ router.post('/', async (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [newId, project_id, title, description, severityNormalized, cvss_score, status,
        steps_to_reproduce, impact, remediation, affected_component, cwe_id, created_by,
-       normalizedFindingType, file_path, line_number, tool_name, asset_type, port, protocol,
+       normalizedType, file_path, line_number, tool_name, asset_type, port, protocol,
        llm_category, prompt_example]
     );
-    
     const [rows] = await db.query('SELECT * FROM findings WHERE id = ?', [newId]);
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -130,15 +107,32 @@ router.post('/', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-//  GET /api/findings/:id/pocs   ← MUST be before /:id
+//  GET /api/findings/:id/pocs  ← returns base64 data URLs
 // ─────────────────────────────────────────────────────────────
 router.get('/:id/pocs', async (req, res) => {
   try {
     const [rows] = await db.query(
-      'SELECT * FROM finding_pocs WHERE finding_id = ? ORDER BY uploaded_at ASC',
+      'SELECT id, finding_id, file_name, mime_type, uploaded_by, uploaded_at, image_data FROM finding_pocs WHERE finding_id = ? ORDER BY uploaded_at ASC',
       [req.params.id]
     );
-    res.json(rows);
+
+    // Convert binary image_data to base64 data URL
+    const pocs = rows.map(row => {
+      const mimeType = row.mime_type || 'image/jpeg';
+      const base64   = row.image_data ? row.image_data.toString('base64') : null;
+      return {
+        id:          row.id,
+        finding_id:  row.finding_id,
+        file_name:   row.file_name,
+        mime_type:   mimeType,
+        uploaded_by: row.uploaded_by,
+        uploaded_at: row.uploaded_at,
+        // Frontend uses this directly as <img src=...>
+        file_path:   base64 ? `data:${mimeType};base64,${base64}` : null,
+      };
+    });
+
+    res.json(pocs);
   } catch (err) {
     console.error('GET /api/findings/:id/pocs error:', err);
     res.status(500).json({ message: err.sqlMessage || err.message || 'Failed to fetch POCs' });
@@ -146,21 +140,35 @@ router.get('/:id/pocs', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-//  POST /api/findings/:id/pocs
+//  POST /api/findings/:id/pocs — stores image in DB
 // ─────────────────────────────────────────────────────────────
 router.post('/:id/pocs', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
+
   const { uploaded_by = null } = req.body;
-  const file_path = `/uploads/pocs/${req.file.filename}`;
+  const imageBuffer = req.file.buffer;
+  const mimeType    = req.file.mimetype;
+  const fileName    = req.file.originalname;
+
   try {
     const [[{ newId }]] = await db.query(`SELECT UUID() AS newId`);
     await db.query(
-      `INSERT INTO finding_pocs (id, finding_id, file_path, file_name, uploaded_by)
-       VALUES (?, ?, ?, ?, ?)`,
-      [newId, req.params.id, file_path, req.file.originalname, uploaded_by]
+      `INSERT INTO finding_pocs (id, finding_id, file_path, file_name, mime_type, image_data, uploaded_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [newId, req.params.id, '', fileName, mimeType, imageBuffer, uploaded_by]
     );
-    const [rows] = await db.query('SELECT * FROM finding_pocs WHERE id = ?', [newId]);
-    res.status(201).json(rows[0]);
+
+    // Return base64 data URL so frontend can use it immediately
+    const base64 = imageBuffer.toString('base64');
+    res.status(201).json({
+      id:          newId,
+      finding_id:  req.params.id,
+      file_name:   fileName,
+      mime_type:   mimeType,
+      uploaded_by: uploaded_by,
+      uploaded_at: new Date().toISOString(),
+      file_path:   `data:${mimeType};base64,${base64}`,
+    });
   } catch (err) {
     console.error('POST /api/findings/:id/pocs error:', err);
     res.status(500).json({ message: err.sqlMessage || err.message || 'Failed to save POC' });
@@ -173,12 +181,10 @@ router.post('/:id/pocs', upload.single('file'), async (req, res) => {
 router.delete('/:id/pocs/:pocId', async (req, res) => {
   try {
     const [rows] = await db.query(
-      'SELECT * FROM finding_pocs WHERE id = ? AND finding_id = ?',
+      'SELECT id FROM finding_pocs WHERE id = ? AND finding_id = ?',
       [req.params.pocId, req.params.id]
     );
     if (rows.length === 0) return res.status(404).json({ message: 'POC not found' });
-    const filePath = path.join(__dirname, '..', rows[0].file_path);
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     await db.query('DELETE FROM finding_pocs WHERE id = ?', [req.params.pocId]);
     res.json({ message: 'POC deleted successfully' });
   } catch (err) {
@@ -188,7 +194,7 @@ router.delete('/:id/pocs/:pocId', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-//  GET /api/findings/:id (UPDATED to return all fields)
+//  GET /api/findings/:id
 // ─────────────────────────────────────────────────────────────
 router.get('/:id', async (req, res) => {
   try {
@@ -202,18 +208,17 @@ router.get('/:id', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-//  PATCH /api/findings/:id (UPDATED with new fields)
+//  PATCH /api/findings/:id
 // ─────────────────────────────────────────────────────────────
 router.patch('/:id', async (req, res) => {
   const allowed = [
     'title', 'description', 'severity', 'cvss_score', 'status',
     'steps_to_reproduce', 'impact', 'remediation', 'affected_component',
     'cwe_id', 'retest_status', 'retest_date', 'retest_notes', 'retested_by',
-    // NEW FIELDS
     'finding_type', 'file_path', 'line_number', 'tool_name',
     'asset_type', 'port', 'protocol', 'llm_category', 'prompt_example'
   ];
-  
+
   const updates = Object.entries(req.body)
     .filter(([key]) => allowed.includes(key))
     .reduce((acc, [key, val]) => ({ ...acc, [key]: val }), {});
@@ -221,10 +226,10 @@ router.patch('/:id', async (req, res) => {
   if (Object.keys(updates).length === 0) {
     return res.status(400).json({ message: 'No valid fields to update' });
   }
-  
+
   const setClauses = Object.keys(updates).map(k => `${k} = ?`).join(', ');
   const values     = [...Object.values(updates), req.params.id];
-  
+
   try {
     const [result] = await db.query(`UPDATE findings SET ${setClauses} WHERE id = ?`, values);
     if (result.affectedRows === 0) return res.status(404).json({ message: 'Finding not found' });
@@ -258,16 +263,28 @@ router.get('/pocs/batch', async (req, res) => {
   if (!finding_ids) {
     return res.status(400).json({ message: 'finding_ids query param is required' });
   }
-  
-  const ids = finding_ids.split(',');
+  const ids          = finding_ids.split(',');
   const placeholders = ids.map(() => '?').join(',');
-  
   try {
     const [rows] = await db.query(
-      `SELECT * FROM finding_pocs WHERE finding_id IN (${placeholders}) ORDER BY uploaded_at ASC`,
+      `SELECT id, finding_id, file_name, mime_type, uploaded_by, uploaded_at, image_data
+       FROM finding_pocs WHERE finding_id IN (${placeholders}) ORDER BY uploaded_at ASC`,
       ids
     );
-    res.json(rows);
+    const pocs = rows.map(row => {
+      const mimeType = row.mime_type || 'image/jpeg';
+      const base64   = row.image_data ? row.image_data.toString('base64') : null;
+      return {
+        id:          row.id,
+        finding_id:  row.finding_id,
+        file_name:   row.file_name,
+        mime_type:   mimeType,
+        uploaded_by: row.uploaded_by,
+        uploaded_at: row.uploaded_at,
+        file_path:   base64 ? `data:${mimeType};base64,${base64}` : null,
+      };
+    });
+    res.json(pocs);
   } catch (err) {
     console.error('GET /api/findings/pocs/batch error:', err);
     res.status(500).json({ message: err.sqlMessage || err.message || 'Failed to fetch POCs' });
