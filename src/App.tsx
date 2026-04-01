@@ -12,6 +12,9 @@ import Findings from "./pages/Findings";
 import KnowledgeBase from "./pages/KnowledgeBase";
 import Users from "./pages/Users";
 import NotFound from "./pages/NotFound";
+import Trending from "./pages/trending";
+import ASM from "./pages/asm";
+import LLM from "./pages/llm";
 
 const queryClient = new QueryClient();
 
@@ -30,7 +33,10 @@ const App = () => (
             <Route path="/projects/:id" element={<ProjectDetail />} />
             <Route path="/findings" element={<Findings />} />
             <Route path="/knowledge-base" element={<KnowledgeBase />} />
+            <Route path="/trending" element={<Trending />} />
             <Route path="/users" element={<Users />} />
+            <Route path="/asm" element={<ASM />} />
+            <Route path="/llm" element={<LLM />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

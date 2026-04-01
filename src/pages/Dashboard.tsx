@@ -1,9 +1,10 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { projects, findings, users } from '@/data/mockData';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 import {
   FolderKanban,
   Bug,
@@ -46,29 +47,89 @@ const statusColors = {
   overdue: '#ef4444',
 };
 
+interface SupabaseProject {
+  id: string;
+  name: string;
+  client: string;
+  status: string;
+  findings_count: number;
+  critical_count: number;
+  assignees_count: number;
+  [key: string]: any;
+}
+
 export default function Dashboard() {
   const { user, role, username } = useAuth();
 
+  // ── Supabase projects state ──────────────────────────────────────────────
+  const [projects, setProjects] = useState<SupabaseProject[]>([]);
+
+  useEffect(() => {
+    fetchProjects();
+  }, [user]);
+
+  const fetchProjects = async () => {
+    if (!user) return;
+    try {
+      const { data: projectsData, error: projectsError } = await supabase
+        .from('projects')
+        .select('*');
+
+      if (projectsError) throw projectsError;
+
+      const { data: findingsData } = await supabase
+        .from('findings')
+        .select('project_id, severity');
+
+      const { data: assignmentsData } = await supabase
+        .from('project_assignments')
+        .select('project_id, user_id');
+
+      const projectsWithCounts = (projectsData || []).map(project => {
+        const projectFindings = findingsData?.filter(f => f.project_id === project.id) || [];
+        const criticalFindings = projectFindings.filter(f => f.severity === 'critical');
+        const assignees = assignmentsData?.filter(a => a.project_id === project.id) || [];
+
+        return {
+          ...project,
+          findings_count: projectFindings.length,
+          critical_count: criticalFindings.length,
+          assignees_count: assignees.length,
+          // keep a list of assigned user ids so tester filtering still works
+          assignedTesters: assignees.map((a: any) => a.user_id),
+          // normalise findings array shape expected by stats below
+          findings: projectFindings,
+        };
+      });
+
+      setProjects(projectsWithCounts);
+    } catch (error) {
+      console.error('Error fetching projects:', error);
+      toast.error('Failed to load projects');
+    }
+  };
+  // ────────────────────────────────────────────────────────────────────────
+
   const stats = useMemo(() => {
-    const userProjects = role === 'tester' 
-      ? projects.filter(p => user && p.assignedTesters.includes(user.id))
+    const userProjects = role === 'tester'
+      ? projects.filter(p => user && p.assignedTesters?.includes(user.id))
       : projects;
 
-    const allFindings = userProjects.flatMap(p => p.findings);
-    
+    const allFindings = userProjects.flatMap(p => p.findings ?? []);
+
     return {
       totalProjects: userProjects.length,
       activeProjects: userProjects.filter(p => p.status === 'active').length,
       completedProjects: userProjects.filter(p => p.status === 'completed').length,
       overdueProjects: userProjects.filter(p => p.status === 'overdue').length,
       totalFindings: allFindings.length,
-      criticalFindings: allFindings.filter(f => f.severity === 'critical').length,
-      highFindings: allFindings.filter(f => f.severity === 'high').length,
-      mediumFindings: allFindings.filter(f => f.severity === 'medium').length,
-      lowFindings: allFindings.filter(f => f.severity === 'low').length,
-      infoFindings: allFindings.filter(f => f.severity === 'info').length,
+      criticalFindings: allFindings.filter((f: any) => f.severity === 'Critical').length,
+      highFindings: allFindings.filter((f: any) => f.severity === 'High').length,
+      mediumFindings: allFindings.filter((f: any) => f.severity === 'Medium').length,
+      lowFindings: allFindings.filter((f: any) => f.severity === 'Low').length,
+      infoFindings: allFindings.filter((f: any) => f.severity === 'Informational').length,
     };
-  }, [user]);
+  }, [user, role, projects]);
 
   const severityData = [
     { name: 'Critical', value: stats.criticalFindings, color: severityColors.critical },
@@ -94,7 +155,73 @@ export default function Dashboard() {
     { month: 'Dec', findings: 7, projects: 2 },
   ];
 
-  const recentProjects = projects.slice(0, 4);
+  const recentProjects = useMemo(() => {
+    if (role === 'admin') {
+      return projects.slice(0, 4);
+    }
+    return projects
+      .filter(p => user && p.assignedTesters?.includes(user.id))
+      .slice(0, 4);
+  }, [user, role, projects]);
+
+  type AppRole = 'admin' | 'manager' | 'tester';
+
+  interface UserWithRole {
+    id: string;
+    user_id: string;
+    username: string;
+    full_name: string | null;
+    created_at: string;
+    role: AppRole | null;
+  }
+
+  const [userss, setUserss] = useState<UserWithRole[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const fetchUsers = async () => {
+    setIsLoading(true);
+    try {
+      const { data: profiles, error: profilesError } = await supabase
+        .from('profiles')
+        .select('*');
+
+      if (profilesError) throw profilesError;
+
+      const { data: roles, error: rolesError } = await supabase
+        .from('user_roles')
+        .select('*');
+
+      if (rolesError) throw rolesError;
+
+      const usersWithRoles: UserWithRole[] = (profiles || []).map(profile => {
+        const userRole = roles?.find(r => r.user_id === profile.user_id);
+        return {
+          id: profile.id,
+          user_id: profile.user_id,
+          username: profile.username,
+          full_name: profile.full_name,
+          created_at: profile.created_at,
+          role: userRole?.role as AppRole | null,
+        };
+      });
+
+      setUserss(usersWithRoles);
+    } catch (error) {
+      console.error('Error fetching users:', error);
+      toast.error('Failed to load users');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const filteredUsers = userss.filter((u) =>
+    u.username.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
 
   return (
     <DashboardLayout
@@ -227,7 +354,7 @@ export default function Dashboard() {
           </Card>
 
           {/* Findings Trend */}
-          <Card className="lg:col-span-2 animate-fade-in" style={{ animationDelay: '250ms' }}>
+          <Card className="lg:col-span-2 animate-fade-in hidden sm:block" style={{ animationDelay: '250ms' }}>
             <CardHeader>
               <CardTitle className="text-lg">Findings Trend</CardTitle>
             </CardHeader>
@@ -267,29 +394,38 @@ export default function Dashboard() {
         </div>
 
         {/* Recent Projects & Team */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card className="animate-fade-in" style={{ animationDelay: '300ms' }}>
             <CardHeader>
               <CardTitle className="text-lg">Recent Projects</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {recentProjects.map((project) => (
-                <div
-                  key={project.id}
-                  className="flex items-center justify-between p-4 rounded-lg bg-secondary/30 border border-border/50 hover:border-primary/30 transition-colors"
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium truncate">{project.name}</p>
-                    <p className="text-sm text-muted-foreground">{project.client}</p>
+              {recentProjects.length > 0 ? (
+                recentProjects.map((project) => (
+                  <div
+                    key={project.id}
+                    className="flex items-center justify-between p-4 rounded-lg bg-secondary/30 border border-border/50 hover:border-primary/30 transition-colors"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate">{project.name}</p>
+                      <p className="text-sm text-muted-foreground">{project.client}</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Badge variant={project.status as 'active' | 'completed' | 'pending' | 'overdue'}>
+                        {project.status}
+                      </Badge>
+                      <span className="text-sm text-muted-foreground">
+                        {project.findings_count} findings
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <Badge variant={project.status}>{project.status}</Badge>
-                    <span className="text-sm text-muted-foreground">
-                      {project.findings.length} findings
-                    </span>
-                  </div>
+                ))
+              ) : (
+                <div className="flex flex-col items-center justify-center py-10 text-center text-muted-foreground">
+                  <FolderKanban className="h-10 w-10 mb-3 opacity-30" />
+                  <p className="text-sm">No projects assigned to you yet.</p>
                 </div>
-              ))}
+              )}
             </CardContent>
           </Card>
 
@@ -298,29 +434,138 @@ export default function Dashboard() {
               <CardHeader>
                 <CardTitle className="text-lg">Team Members</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                {users.map((member) => (
+              <CardContent className="space-y-3">
+                {filteredUsers.map((member) => {
+                  const safeUsername = (member.username || '')
+                    .replace(/<[^>]*>/g, '')
+                    .replace(/[&<>"'`]/g, '')
+                    .trim();
+
+                  const avatarChar = safeUsername.charAt(0).toUpperCase() || '?';
+
+                  if (!safeUsername) return null;
+
+                  return (
+                    <div
+                      key={member.id}
+                      className="flex items-center gap-3 p-3 rounded-lg bg-secondary/30 border border-border/50"
+                    >
+                      <div
+                        className="rounded-full gradient-primary flex items-center justify-center text-primary-foreground font-semibold text-sm"
+                        style={{ minWidth: '36px', minHeight: '36px', width: '36px', height: '36px' }}
+                      >
+                        {avatarChar}
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <p
+                          className="font-medium text-sm truncate"
+                          title={safeUsername}
+                        >
+                          {safeUsername}
+                        </p>
+                      </div>
+
+                      <div style={{ flexShrink: 0 }}>
+                        <Badge variant={member.role === 'admin' ? 'default' : 'secondary'}>
+                          {member.role}
+                        </Badge>
+                      </div>
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          )}
+        </div> */}
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Card className="animate-fade-in" style={{ animationDelay: '300ms' }}>
+            <CardHeader>
+              <CardTitle className="text-lg">Recent Projects</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {recentProjects.length > 0 ? (
+                recentProjects.map((project) => (
                   <div
-                    key={member.id}
-                    className="flex items-center gap-4 p-4 rounded-lg bg-secondary/30 border border-border/50"
+                    key={project.id}
+                    className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 p-4 rounded-lg bg-secondary/30 border border-border/50 hover:border-primary/30 transition-colors"
                   >
-                    <div className="h-10 w-10 rounded-full gradient-primary flex items-center justify-center text-primary-foreground font-semibold">
-                      {member.username.charAt(0).toUpperCase()}
+                    {/* Name + Client */}
+                    <div className="min-w-0">
+                      <p className="font-medium truncate">{project.name}</p>
+                      <p className="text-sm text-muted-foreground truncate">{project.client}</p>
                     </div>
-                    <div className="flex-1">
-                      <p className="font-medium">{member.username}</p>
-                      <p className="text-sm text-muted-foreground">{member.email}</p>
+
+                    {/* Badge + Findings — below on mobile, inline on sm+ */}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge variant={project.status as 'active' | 'completed' | 'pending' | 'overdue'}>
+                        {project.status}
+                      </Badge>
+                      <span className="text-sm text-muted-foreground whitespace-nowrap">
+                        {project.findings_count} findings
+                      </span>
                     </div>
-                    <Badge variant={member.role === 'admin' ? 'default' : 'secondary'}>
-                      {member.role}
-                    </Badge>
                   </div>
-                ))}
+                ))
+              ) : (
+                <div className="flex flex-col items-center justify-center py-10 text-center text-muted-foreground">
+                  <FolderKanban className="h-10 w-10 mb-3 opacity-30" />
+                  <p className="text-sm">No projects assigned to you yet.</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {(role === 'admin' || role === 'manager') && (
+            <Card className="animate-fade-in" style={{ animationDelay: '350ms' }}>
+              <CardHeader>
+                <CardTitle className="text-lg">Team Members</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {filteredUsers.map((member) => {
+                  const safeUsername = (member.username || '')
+                    .replace(/<[^>]*>/g, '')
+                    .replace(/[&<>"'`]/g, '')
+                    .trim();
+
+                  const avatarChar = safeUsername.charAt(0).toUpperCase() || '?';
+
+                  if (!safeUsername) return null;
+
+                  return (
+                    <div
+                      key={member.id}
+                      className="flex items-center gap-3 p-3 rounded-lg bg-secondary/30 border border-border/50"
+                    >
+                      <div
+                        className="rounded-full gradient-primary flex items-center justify-center text-primary-foreground font-semibold text-sm shrink-0"
+                        style={{ width: '36px', height: '36px' }}
+                      >
+                        {avatarChar}
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-sm truncate" title={safeUsername}>
+                          {safeUsername}
+                        </p>
+                      </div>
+
+                      <div className="shrink-0">
+                        <Badge variant={member.role === 'admin' ? 'default' : 'secondary'}>
+                          {member.role}
+                        </Badge>
+                      </div>
+                    </div>
+                  );
+                })}
               </CardContent>
             </Card>
           )}
         </div>
+
       </div>
+
     </DashboardLayout>
   );
 }

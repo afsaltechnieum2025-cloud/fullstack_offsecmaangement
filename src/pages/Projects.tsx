@@ -432,7 +432,7 @@ export default function Projects() {
         </div>
 
         {/* Projects Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {filteredProjects.map((project, index) => (
             <Card
               key={project.id}
@@ -511,7 +511,90 @@ export default function Projects() {
               </CardContent>
             </Card>
           ))}
+        </div> */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+  {filteredProjects.map((project, index) => (
+    <Card
+      key={project.id}
+      glow
+      className="animate-fade-in hover:border-primary/30 transition-all"
+      style={{ animationDelay: `${index * 50}ms` }}
+    >
+      <CardHeader className="pb-3">
+        {/* Stack vertically on mobile, row on sm+ */}
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+          <div className="space-y-1 min-w-0">
+            <CardTitle className="text-lg truncate">{project.name}</CardTitle>
+            <p className="text-sm text-muted-foreground">{project.client}</p>
+          </div>
+          <div className="shrink-0">
+            {getStatusBadge(project.status)}
+          </div>
         </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="flex items-center gap-2 text-sm min-w-0">
+            <Globe className="h-4 w-4 text-primary shrink-0" />
+            <span className="text-muted-foreground truncate">{project.domain || 'Not set'}</span>
+          </div>
+          <div className="flex items-center gap-2 text-sm">
+            <Server className="h-4 w-4 text-primary shrink-0" />
+            <span className="text-muted-foreground">{project.ip_addresses?.length || 0} IPs</span>
+          </div>
+          <div className="flex items-start gap-2 text-sm col-span-1">
+            <Calendar className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+            <span className="text-muted-foreground leading-snug">
+              {formatDate(project.start_date)} - {formatDate(project.end_date)}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 text-sm">
+            <UsersIcon className="h-4 w-4 text-primary shrink-0" />
+            <span className="text-muted-foreground">
+              {project.assignees_count} Testers
+            </span>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-y-2 pt-2 border-t border-border/50">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium">{project.findings_count}</span>
+            <span className="text-sm text-muted-foreground">Findings</span>
+            {(project.critical_count || 0) > 0 && (
+              <Badge variant="critical" className="text-xs">
+                {project.critical_count} Critical
+              </Badge>
+            )}
+          </div>
+          <div className="flex items-center gap-1">
+            {(role === 'admin' || role === 'manager') && (
+              <Button variant="ghost" size="sm" onClick={() => openAssignDialog(project)}>
+                <UserPlus className="h-4 w-4 mr-1" />
+                Assign
+              </Button>
+            )}
+            {role === 'admin' && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => openDeleteDialog(project)}
+                className="text-destructive hover:text-destructive"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            )}
+            <Link to={`/projects/${project.id}`}>
+              <Button variant="ghost" size="sm">
+                View
+                <ChevronRight className="h-4 w-4 ml-1" />
+              </Button>
+            </Link>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  ))}
+</div>
 
         {filteredProjects.length === 0 && (
           <Card className="p-12">

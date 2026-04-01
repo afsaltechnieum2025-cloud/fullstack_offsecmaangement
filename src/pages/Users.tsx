@@ -470,8 +470,8 @@ export default function Users() {
                 </div>
                 <div className="space-y-2">
                   <Label>Role</Label>
-                  <Select 
-                    value={newUser.role} 
+                  <Select
+                    value={newUser.role}
                     onValueChange={(v) => setNewUser({ ...newUser, role: v as AppRole })}
                   >
                     <SelectTrigger>
@@ -515,7 +515,7 @@ export default function Users() {
             >
               <CardContent className="p-4">
                 <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-4">
+                  {/* <div className="flex items-center gap-4">
                     <div className="h-12 w-12 rounded-full gradient-primary flex items-center justify-center text-primary-foreground font-semibold text-lg">
                       {member.username.charAt(0).toUpperCase()}
                     </div>
@@ -524,6 +524,18 @@ export default function Users() {
                       <div className="flex items-center gap-1 text-sm text-muted-foreground">
                         <Mail className="h-3 w-3" />
                         {member.full_name || 'No name set'}
+                      </div>
+                    </div>
+                  </div> */}
+                  <div className="flex items-center gap-4 min-w-0">
+                    <div className="h-12 w-12 rounded-full gradient-primary flex items-center justify-center text-primary-foreground font-semibold text-lg shrink-0">
+                      {member.username.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-semibold truncate">{member.username}</p>
+                      <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                        <Mail className="h-3 w-3 shrink-0" />
+                        <span className="truncate">{member.full_name || 'No name set'}</span>
                       </div>
                     </div>
                   </div>
@@ -541,7 +553,7 @@ export default function Users() {
                         <FolderKanban className="h-4 w-4 mr-2" />
                         Manage Projects
                       </DropdownMenuItem>
-                      <DropdownMenuItem 
+                      <DropdownMenuItem
                         onClick={() => openDeleteDialog(member)}
                         className="text-destructive focus:text-destructive"
                       >
@@ -568,7 +580,7 @@ export default function Users() {
             <UserPlus className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
             <p className="text-lg font-medium">No users found</p>
             <p className="text-sm text-muted-foreground mt-1">
-              {users.length === 0 
+              {users.length === 0
                 ? 'Create users via the backend to get started'
                 : 'Try adjusting your search criteria'}
             </p>
@@ -620,14 +632,14 @@ export default function Users() {
             <AlertDialogHeader>
               <AlertDialogTitle>Delete User</AlertDialogTitle>
               <AlertDialogDescription>
-                Are you sure you want to delete <strong>{userToDelete?.username}</strong>? 
+                Are you sure you want to delete <strong>{userToDelete?.username}</strong>?
                 This action cannot be undone. All of the user's data, including their profile and role, will be permanently removed.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
-              <Button 
-                variant="destructive" 
+              <Button
+                variant="destructive"
                 onClick={handleDeleteUser}
                 disabled={isDeleting}
               >

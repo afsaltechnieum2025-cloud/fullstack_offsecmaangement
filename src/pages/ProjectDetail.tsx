@@ -4,6 +4,7 @@ import DashboardLayout from '@/components/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { useAuth } from '@/contexts/AuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
@@ -13,6 +14,7 @@ import {
   Globe,
   Server,
   Calendar,
+  CheckSquare,
   Bug,
   FileText,
   Download,
@@ -20,9 +22,36 @@ import {
   Loader2,
   ChevronRight,
   RefreshCw,
+  Search,
 } from 'lucide-react';
 import { generateTechnicalReport, generateManagementReport, generateRetestReport } from '@/utils/reportGenerator';
 import FindingDetailDialog from '@/components/FindingDetailDialog';
+import { knowledgeBase, owaspChecklist, users } from '@/data/mockData';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogClose,
+} from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+
+type Severity = 'Critical' | 'High' | 'Medium' | 'Low' | 'Informational';
 
 type Project = {
   id: string;
@@ -71,6 +100,89 @@ export default function ProjectDetail() {
   const [isLoading, setIsLoading] = useState(true);
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [checklistProgress, setChecklistProgress] = useState<Record<string, boolean>>({});
+
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Add Finding dialog state
+  const [addFindingOpen, setAddFindingOpen] = useState(false);
+  const [formData, setFormData] = useState({
+    severity: '' as Severity | '',
+    title: '',
+    description: '',
+    stepsToReproduce: '',
+    impact: '',
+    remediation: '',
+    affectedComponent: '',
+    cvssScore: '',
+    cweId: '',
+  });
+
+  const resetForm = () => {
+    setFormData({
+      severity: '',
+      title: '',
+      description: '',
+      stepsToReproduce: '',
+      impact: '',
+      remediation: '',
+      affectedComponent: '',
+      cvssScore: '',
+      cweId: '',
+    });
+  };
+
+  const handleSubmitFinding = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!formData.severity || !formData.title || !formData.description) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+
+    if (!user || !id) {
+      toast.error('You must be logged in');
+      return;
+    }
+
+    const { data, error } = await supabase.from('findings').insert({
+      project_id: id,
+      title: formData.title,
+      description: formData.description,
+      severity: formData.severity,
+      steps_to_reproduce: formData.stepsToReproduce || null,
+      impact: formData.impact || null,
+      remediation: formData.remediation || null,
+      affected_component: formData.affectedComponent || null,
+      cvss_score: formData.cvssScore ? parseFloat(formData.cvssScore) : null,
+      cwe_id: formData.cweId || null,
+      created_by: user.id,
+    }).select().single();
+
+    if (error) {
+      toast.error('Failed to add finding: ' + error.message);
+      return;
+    }
+
+    setFindings([data as Finding, ...findings]);
+    toast.success('Finding added successfully!');
+    resetForm();
+    setAddFindingOpen(false);
+  };
+
+  const toggleChecklistItem = (category: string, item: string) => {
+    const key = `${category}-${item}`;
+    setChecklistProgress(prev => ({
+      ...prev,
+      [key]: !prev[key]
+    }));
+  };
+
+  const getCategoryProgress = (category: string, items: string[]) => {
+    const completed = items.filter(item => checklistProgress[`${category}-${item}`]).length;
+    return { completed, total: items.length };
+  };
 
   useEffect(() => {
     if (id) {
@@ -80,10 +192,9 @@ export default function ProjectDetail() {
 
   const fetchProjectData = async () => {
     if (!user) return;
-    
+
     setIsLoading(true);
     try {
-      // Fetch project
       const { data: projectData, error: projectError } = await supabase
         .from('projects')
         .select('*')
@@ -94,7 +205,6 @@ export default function ProjectDetail() {
       setProject(projectData);
 
       if (projectData) {
-        // Fetch findings for this project
         const { data: findingsData, error: findingsError } = await supabase
           .from('findings')
           .select('*')
@@ -104,20 +214,18 @@ export default function ProjectDetail() {
         if (findingsError) throw findingsError;
         setFindings(findingsData || []);
 
-        // Fetch profiles
         const { data: profilesData } = await supabase
           .from('profiles')
           .select('user_id, username');
         setProfiles(profilesData || []);
 
-        // Fetch project assignees
         const { data: assignmentsData } = await supabase
           .from('project_assignments')
           .select('user_id')
           .eq('project_id', id);
 
         if (assignmentsData && profilesData) {
-          const assignedProfiles = profilesData.filter(p => 
+          const assignedProfiles = profilesData.filter(p =>
             assignmentsData.some(a => a.user_id === p.user_id)
           );
           setAssignees(assignedProfiles);
@@ -152,16 +260,15 @@ export default function ProjectDetail() {
   const handleGenerateTechnicalReport = async () => {
     if (!project) return;
     try {
-      // Fetch POC images for all findings
       const findingIds = findings.map(f => f.id);
       const pocImages: Record<string, string[]> = {};
-      
+
       if (findingIds.length > 0) {
         const { data: pocsData } = await supabase
           .from('finding_pocs')
           .select('finding_id, file_path')
           .in('finding_id', findingIds);
-        
+
         if (pocsData) {
           pocsData.forEach(poc => {
             if (!pocImages[poc.finding_id]) {
@@ -172,7 +279,6 @@ export default function ProjectDetail() {
         }
       }
 
-      // Transform data for report generator
       const reportProject = {
         id: project.id,
         name: project.name,
@@ -189,7 +295,7 @@ export default function ProjectDetail() {
         createdAt: new Date(project.created_at),
         findings: [],
       };
-      
+
       const reportFindings = findings.map(f => {
         const severityMap: Record<string, 'critical' | 'high' | 'medium' | 'low' | 'info'> = {
           'critical': 'critical',
@@ -245,7 +351,7 @@ export default function ProjectDetail() {
         createdAt: new Date(project.created_at),
         findings: [],
       };
-      
+
       const reportFindings = findings.map(f => {
         const severityMap: Record<string, 'critical' | 'high' | 'medium' | 'low' | 'info'> = {
           'critical': 'critical',
@@ -299,7 +405,7 @@ export default function ProjectDetail() {
         createdAt: new Date(project.created_at),
         findings: [],
       };
-      
+
       const retestFindings = findings.map(f => ({
         id: f.id,
         title: f.title,
@@ -344,10 +450,7 @@ export default function ProjectDetail() {
   }
 
   return (
-    <DashboardLayout
-      title={project.name}
-      description={project.client}
-    >
+    <DashboardLayout title={project.name} description={project.client}>
       <div className="space-y-6">
         {/* Back Button */}
         <Link to="/projects">
@@ -375,11 +478,11 @@ export default function ProjectDetail() {
             {(role === 'admin' || role === 'manager') && (
               <TabsTrigger value="reports">Reports</TabsTrigger>
             )}
+            <TabsTrigger value="checklist">Check List</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Target Information */}
               <Card>
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
@@ -397,9 +500,7 @@ export default function ProjectDetail() {
                     <div className="flex flex-wrap gap-2 mt-1">
                       {project.ip_addresses && project.ip_addresses.length > 0 ? (
                         project.ip_addresses.map((ip, i) => (
-                          <Badge key={i} variant="secondary" className="font-mono">
-                            {ip}
-                          </Badge>
+                          <Badge key={i} variant="secondary" className="font-mono">{ip}</Badge>
                         ))
                       ) : (
                         <span className="text-muted-foreground text-sm">No IPs specified</span>
@@ -409,7 +510,6 @@ export default function ProjectDetail() {
                 </CardContent>
               </Card>
 
-              {/* Findings Summary */}
               <Card>
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
@@ -451,74 +551,83 @@ export default function ProjectDetail() {
 
           <TabsContent value="findings" className="space-y-4">
             <div className="flex justify-between items-center">
-              <p className="text-muted-foreground">
-                {findings.length} findings reported
-              </p>
-              <Link to="/findings">
-                <Button variant="gradient">
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Finding
-                </Button>
-              </Link>
+              <p className="text-muted-foreground">{findings.length} findings reported</p>
+              <Button variant="gradient" onClick={() => setAddFindingOpen(true)}>
+                <Plus className="h-4 w-4 mr-2" />
+                Add Finding
+              </Button>
             </div>
 
-            {findings.length === 0 ? (
-              <Card className="p-12 text-center">
-                <Bug className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <p className="text-lg font-medium">No findings yet</p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Start documenting vulnerabilities found during the assessment
-                </p>
-              </Card>
-            ) : (
-              <div className="space-y-3">
-                {findings.map((finding, index) => (
-                  <Card
-                    key={finding.id}
-                    glow
-                    className="animate-fade-in cursor-pointer hover:border-primary/50 transition-colors"
-                    style={{ animationDelay: `${index * 50}ms` }}
-                    onClick={() => {
-                      setSelectedFinding(finding);
-                      setIsDetailOpen(true);
-                    }}
-                  >
-                    <CardContent className="p-4">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-3 mb-2">
-                            {getSeverityBadge(finding.severity)}
-                            {finding.cvss_score && (
-                              <span className="text-sm text-muted-foreground">
-                                CVSS: {finding.cvss_score}
-                              </span>
-                            )}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search findings..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10 bg-secondary/50"
+              />
+            </div>
+
+            {(() => {
+              const filtered = findings.filter(f =>
+                f.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                (f.description?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false)
+              );
+              if (filtered.length === 0) return (
+                <Card className="p-12 text-center">
+                  <Bug className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                  <p className="text-lg font-medium">{findings.length === 0 ? 'No findings yet' : 'No findings match your search'}</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {findings.length === 0 ? 'Start documenting vulnerabilities found during the assessment' : 'Try a different search term'}
+                  </p>
+                </Card>
+              );
+              return (
+                <div className="space-y-3">
+                  {filtered.map((finding, index) => (
+                    <Card
+                      key={finding.id}
+                      glow
+                      className="animate-fade-in cursor-pointer hover:border-primary/50 transition-colors"
+                      style={{ animationDelay: `${index * 50}ms` }}
+                      onClick={() => {
+                        setSelectedFinding(finding);
+                        setIsDetailOpen(true);
+                      }}
+                    >
+                      <CardContent className="p-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-3 mb-2">
+                              {getSeverityBadge(finding.severity)}
+                              {finding.cvss_score && (
+                                <span className="text-sm text-muted-foreground">
+                                  CVSS: {finding.cvss_score}
+                                </span>
+                              )}
+                            </div>
+                            <h3 className="font-semibold">{finding.title}</h3>
+                            <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
+                              {finding.description}
+                            </p>
                           </div>
-                          <h3 className="font-semibold">{finding.title}</h3>
-                          <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
-                            {finding.description}
-                          </p>
+                          <div className="flex items-center gap-2">
+                            <Badge variant={finding.status === 'Open' ? 'destructive' : 'secondary'}>
+                              {finding.status}
+                            </Badge>
+                            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Badge variant={finding.status === 'Open' ? 'destructive' : 'secondary'}>
-                            {finding.status}
-                          </Badge>
-                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                        <div className="flex items-center gap-4 mt-4 text-sm text-muted-foreground">
+                          <span>Reported by: {getUsername(finding.created_by)}</span>
+                          <span>{new Date(finding.created_at).toLocaleDateString()}</span>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-4 mt-4 text-sm text-muted-foreground">
-                        <span>
-                          Reported by: {getUsername(finding.created_by)}
-                        </span>
-                        <span>
-                          {new Date(finding.created_at).toLocaleDateString()}
-                        </span>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              );
+            })()}
           </TabsContent>
 
           <TabsContent value="team" className="space-y-4">
@@ -531,21 +640,27 @@ export default function ProjectDetail() {
               </Card>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {assignees.map((member) => (
-                  <Card key={member.user_id} glow>
-                    <CardContent className="p-4">
-                      <div className="flex items-center gap-4">
-                        <div className="h-12 w-12 rounded-full gradient-technieum flex items-center justify-center text-primary-foreground font-semibold text-lg">
-                          {member.username.charAt(0).toUpperCase()}
+                {assignees.map((member) => {
+                  // Strip any HTML tags from username for safe display
+                  const safeUsername = String(member.username).replace(/<[^>]*>/g, '').trim() || 'Unknown';
+                  const initial = safeUsername.charAt(0).toUpperCase();
+
+                  return (
+                    <Card key={member.user_id} glow>
+                      <CardContent className="p-4">
+                        <div className="flex items-center gap-4">
+                          <div className="h-12 w-12 rounded-full gradient-technieum flex items-center justify-center text-primary-foreground font-semibold text-lg">
+                            {initial}
+                          </div>
+                          <div>
+                            <p className="font-medium">{safeUsername}</p>
+                            <Badge variant="secondary" className="mt-1">Tester</Badge>
+                          </div>
                         </div>
-                        <div>
-                          <p className="font-medium">{member.username}</p>
-                          <Badge variant="secondary" className="mt-1">Tester</Badge>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
               </div>
             )}
           </TabsContent>
@@ -564,11 +679,7 @@ export default function ProjectDetail() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <Button 
-                      variant="outline" 
-                      className="w-full"
-                      onClick={handleGenerateTechnicalReport}
-                    >
+                    <Button variant="outline" className="w-full" onClick={handleGenerateTechnicalReport}>
                       <Download className="h-4 w-4 mr-2" />
                       Generate Technical Report
                     </Button>
@@ -586,11 +697,7 @@ export default function ProjectDetail() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <Button 
-                      variant="outline" 
-                      className="w-full"
-                      onClick={handleGenerateManagementReport}
-                    >
+                    <Button variant="outline" className="w-full" onClick={handleGenerateManagementReport}>
                       <Download className="h-4 w-4 mr-2" />
                       Generate Management Report
                     </Button>
@@ -629,11 +736,7 @@ export default function ProjectDetail() {
                       </Badge>
                     </div>
                   </div>
-                  <Button 
-                    variant="outline" 
-                    className="w-full"
-                    onClick={handleGenerateRetestReport}
-                  >
+                  <Button variant="outline" className="w-full" onClick={handleGenerateRetestReport}>
                     <Download className="h-4 w-4 mr-2" />
                     Generate Retest Report
                   </Button>
@@ -641,8 +744,206 @@ export default function ProjectDetail() {
               </Card>
             </TabsContent>
           )}
+
+          <TabsContent value="checklist" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <CheckSquare className="h-5 w-5 text-primary" />
+                  OWASP Web Application Security Testing Checklist
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Comprehensive checklist based on OWASP testing guidelines. Track your testing progress for each engagement.
+                </p>
+              </CardHeader>
+              <CardContent>
+                <Accordion type="multiple" className="space-y-2">
+                  {owaspChecklist.map((section) => {
+                    const progress = getCategoryProgress(section.category, section.items);
+                    const progressPercent = Math.round((progress.completed / progress.total) * 100);
+                    return (
+                      <AccordionItem
+                        key={section.category}
+                        value={section.category}
+                        className="border border-border/50 rounded-lg px-4 bg-secondary/20"
+                      >
+                        <AccordionTrigger className="hover:no-underline">
+                          <div className="flex items-center justify-between w-full pr-4">
+                            <span className="font-medium">{section.category}</span>
+                            <div className="flex items-center gap-3">
+                              <div className="w-24 h-2 bg-secondary rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-primary transition-all duration-300"
+                                  style={{ width: `${progressPercent}%` }}
+                                />
+                              </div>
+                              <span className="text-sm text-muted-foreground">
+                                {progress.completed}/{progress.total}
+                              </span>
+                            </div>
+                          </div>
+                        </AccordionTrigger>
+                        <AccordionContent>
+                          <div className="space-y-2 pt-2">
+                            {section.items.map((item) => {
+                              const key = `${section.category}-${item}`;
+                              const isChecked = checklistProgress[key] || false;
+                              return (
+                                <label
+                                  key={item}
+                                  className="flex items-start gap-3 p-2 rounded-lg hover:bg-secondary/50 cursor-pointer transition-colors"
+                                >
+                                  <Checkbox
+                                    checked={isChecked}
+                                    onCheckedChange={() => toggleChecklistItem(section.category, item)}
+                                    className="mt-0.5"
+                                  />
+                                  <span className={`text-sm ${isChecked ? 'text-muted-foreground line-through' : ''}`}>
+                                    {item}
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </AccordionContent>
+                      </AccordionItem>
+                    );
+                  })}
+                </Accordion>
+              </CardContent>
+            </Card>
+          </TabsContent>
         </Tabs>
       </div>
+
+      {/* Add Finding Dialog */}
+      <Dialog open={addFindingOpen} onOpenChange={(open) => { setAddFindingOpen(open); if (!open) resetForm(); }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Add New Finding</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSubmitFinding} className="space-y-4 mt-4">
+            {/* Project field — locked to current project */}
+            <div className="space-y-2">
+              <Label>Project</Label>
+              <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-border bg-secondary/50 text-sm">
+                <span className="flex-1 font-medium">{project.name}</span>
+                <Badge variant="secondary" className="text-xs">Current Project</Badge>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Severity *</Label>
+                <Select
+                  value={formData.severity}
+                  onValueChange={(value) => setFormData({ ...formData, severity: value as Severity })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select severity" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Critical">Critical</SelectItem>
+                    <SelectItem value="High">High</SelectItem>
+                    <SelectItem value="Medium">Medium</SelectItem>
+                    <SelectItem value="Low">Low</SelectItem>
+                    <SelectItem value="Informational">Informational</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>CVSS Score</Label>
+                <Input
+                  placeholder="e.g., 9.8"
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  max="10"
+                  value={formData.cvssScore}
+                  onChange={(e) => setFormData({ ...formData, cvssScore: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2 col-span-2">
+                <Label>Title *</Label>
+                <Input
+                  placeholder="Finding title"
+                  value={formData.title}
+                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Affected Component</Label>
+                <Input
+                  placeholder="e.g., /api/users"
+                  value={formData.affectedComponent}
+                  onChange={(e) => setFormData({ ...formData, affectedComponent: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>CWE ID</Label>
+                <Input
+                  placeholder="e.g., CWE-79"
+                  value={formData.cweId}
+                  onChange={(e) => setFormData({ ...formData, cweId: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Description *</Label>
+              <Textarea
+                placeholder="Detailed description of the vulnerability"
+                rows={3}
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Steps to Reproduce</Label>
+              <Textarea
+                placeholder="Step-by-step instructions to reproduce"
+                rows={4}
+                value={formData.stepsToReproduce}
+                onChange={(e) => setFormData({ ...formData, stepsToReproduce: e.target.value })}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Impact</Label>
+              <Textarea
+                placeholder="Potential impact of this vulnerability"
+                rows={2}
+                value={formData.impact}
+                onChange={(e) => setFormData({ ...formData, impact: e.target.value })}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Remediation</Label>
+              <Textarea
+                placeholder="Recommended remediation steps"
+                rows={3}
+                value={formData.remediation}
+                onChange={(e) => setFormData({ ...formData, remediation: e.target.value })}
+              />
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <DialogClose asChild>
+                <Button type="button" variant="outline" onClick={resetForm}>Cancel</Button>
+              </DialogClose>
+              <Button type="submit" className="gradient-technieum">Submit Finding</Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <FindingDetailDialog
         finding={selectedFinding}

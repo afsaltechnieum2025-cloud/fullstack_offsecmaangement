@@ -29,6 +29,13 @@ export const users: User[] = [
     role: 'tester',
     createdAt: new Date('2024-02-15'),
   },
+  {
+    id: '5',
+    username: 'afsal',
+    email: 'afsal.mohamed@technieum.io',
+    role: 'tester',
+    createdAt: new Date('2024-02-15'),
+  },
 ];
 
 // Actual findings from fundsverifier.com pentest report

@@ -96,6 +96,7 @@ export default function Findings() {
   const [pocs, setPocs] = useState<Record<string, FindingPoc[]>>({});
   const [dialogOpen, setDialogOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [deletingFindingId, setDeletingFindingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadingFindingId, setUploadingFindingId] = useState<string | null>(null);
 
@@ -129,14 +130,13 @@ export default function Findings() {
     if (projectsRes.data) setProjects(projectsRes.data);
     if (findingsRes.data) {
       setFindings(findingsRes.data as Finding[]);
-      // Fetch POCs for all findings
       const findingIds = findingsRes.data.map(f => f.id);
       if (findingIds.length > 0) {
         const { data: pocsData } = await supabase
           .from('finding_pocs')
           .select('*')
           .in('finding_id', findingIds);
-        
+
         if (pocsData) {
           const pocsByFinding: Record<string, FindingPoc[]> = {};
           pocsData.forEach(poc => {
@@ -150,7 +150,7 @@ export default function Findings() {
       }
     }
     if (profilesRes.data) setProfiles(profilesRes.data);
-    
+
     setIsLoading(false);
   };
 
@@ -202,7 +202,7 @@ export default function Findings() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!formData.projectId || !formData.severity || !formData.title || !formData.description) {
       toast.error('Please fill in all required fields');
       return;
@@ -238,22 +238,28 @@ export default function Findings() {
     setDialogOpen(false);
   };
 
-  const handleDelete = async (findingId: string) => {
+  const handleDelete = (findingId: string) => {
     const finding = findings.find(f => f.id === findingId);
     if (!finding || finding.created_by !== user?.id) {
       toast.error('You can only delete your own findings');
       return;
     }
+    setDeletingFindingId(findingId);
+  };
 
-    const { error } = await supabase.from('findings').delete().eq('id', findingId);
-    
+  const confirmDelete = async () => {
+    if (!deletingFindingId) return;
+
+    const { error } = await supabase.from('findings').delete().eq('id', deletingFindingId);
+
     if (error) {
       toast.error('Failed to delete finding');
       return;
     }
 
-    setFindings(findings.filter(f => f.id !== findingId));
+    setFindings(findings.filter(f => f.id !== deletingFindingId));
     toast.success('Finding deleted');
+    setDeletingFindingId(null);
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, findingId: string) => {
@@ -262,7 +268,7 @@ export default function Findings() {
 
     const file = files[0];
     const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png'];
-    
+
     if (!allowedTypes.includes(file.type)) {
       toast.error('Only JPEG, JPG, and PNG files are allowed');
       return;
@@ -311,7 +317,7 @@ export default function Findings() {
     }
 
     const { error } = await supabase.from('finding_pocs').delete().eq('id', poc.id);
-    
+
     if (error) {
       toast.error('Failed to delete POC');
       return;
@@ -353,8 +359,8 @@ export default function Findings() {
       return;
     }
 
-    setFindings(findings.map(f => 
-      f.id === findingId 
+    setFindings(findings.map(f =>
+      f.id === findingId
         ? { ...f, retest_status: status, retest_date: new Date().toISOString(), retested_by: user.id }
         : f
     ));
@@ -422,10 +428,18 @@ export default function Findings() {
               <SelectTrigger className="w-full sm:w-48 bg-secondary/50">
                 <SelectValue placeholder="Filter by Project" />
               </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Projects</SelectItem>
+              <SelectContent className="max-w-[calc(100vw-2rem)] w-full">
+                <SelectItem value="all" className="truncate">All Projects</SelectItem>
                 {projects.map(p => (
-                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  <SelectItem
+                    key={p.id}
+                    value={p.id}
+                    className="truncate max-w-full"
+                  >
+                    <span className="truncate block max-w-[calc(100vw-4rem)]">
+                      {p.name}
+                    </span>
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -445,8 +459,8 @@ export default function Findings() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Project *</Label>
-                    <Select 
-                      value={formData.projectId} 
+                    <Select
+                      value={formData.projectId}
                       onValueChange={(value) => setFormData({ ...formData, projectId: value })}
                     >
                       <SelectTrigger>
@@ -461,8 +475,8 @@ export default function Findings() {
                   </div>
                   <div className="space-y-2">
                     <Label>Severity *</Label>
-                    <Select 
-                      value={formData.severity} 
+                    <Select
+                      value={formData.severity}
                       onValueChange={(value) => setFormData({ ...formData, severity: value as Severity })}
                     >
                       <SelectTrigger>
@@ -481,16 +495,16 @@ export default function Findings() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Title *</Label>
-                    <Input 
-                      placeholder="Finding title" 
+                    <Input
+                      placeholder="Finding title"
                       value={formData.title}
                       onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                     />
                   </div>
                   <div className="space-y-2">
                     <Label>CVSS Score</Label>
-                    <Input 
-                      placeholder="e.g., 9.8" 
+                    <Input
+                      placeholder="e.g., 9.8"
                       type="number"
                       step="0.1"
                       min="0"
@@ -503,16 +517,16 @@ export default function Findings() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Affected Component</Label>
-                    <Input 
-                      placeholder="e.g., /api/users" 
+                    <Input
+                      placeholder="e.g., /api/users"
                       value={formData.affectedComponent}
                       onChange={(e) => setFormData({ ...formData, affectedComponent: e.target.value })}
                     />
                   </div>
                   <div className="space-y-2">
                     <Label>CWE ID</Label>
-                    <Input 
-                      placeholder="e.g., CWE-79" 
+                    <Input
+                      placeholder="e.g., CWE-79"
                       value={formData.cweId}
                       onChange={(e) => setFormData({ ...formData, cweId: e.target.value })}
                     />
@@ -520,8 +534,8 @@ export default function Findings() {
                 </div>
                 <div className="space-y-2">
                   <Label>Description *</Label>
-                  <Textarea 
-                    placeholder="Detailed description of the vulnerability" 
+                  <Textarea
+                    placeholder="Detailed description of the vulnerability"
                     rows={3}
                     value={formData.description}
                     onChange={(e) => setFormData({ ...formData, description: e.target.value })}
@@ -529,8 +543,8 @@ export default function Findings() {
                 </div>
                 <div className="space-y-2">
                   <Label>Steps to Reproduce</Label>
-                  <Textarea 
-                    placeholder="Step-by-step instructions to reproduce" 
+                  <Textarea
+                    placeholder="Step-by-step instructions to reproduce"
                     rows={4}
                     value={formData.stepsToReproduce}
                     onChange={(e) => setFormData({ ...formData, stepsToReproduce: e.target.value })}
@@ -538,8 +552,8 @@ export default function Findings() {
                 </div>
                 <div className="space-y-2">
                   <Label>Impact</Label>
-                  <Textarea 
-                    placeholder="Potential impact of this vulnerability" 
+                  <Textarea
+                    placeholder="Potential impact of this vulnerability"
                     rows={2}
                     value={formData.impact}
                     onChange={(e) => setFormData({ ...formData, impact: e.target.value })}
@@ -547,8 +561,8 @@ export default function Findings() {
                 </div>
                 <div className="space-y-2">
                   <Label>Remediation</Label>
-                  <Textarea 
-                    placeholder="Recommended remediation steps" 
+                  <Textarea
+                    placeholder="Recommended remediation steps"
                     rows={3}
                     value={formData.remediation}
                     onChange={(e) => setFormData({ ...formData, remediation: e.target.value })}
@@ -602,7 +616,7 @@ export default function Findings() {
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-start gap-3 flex-1">
-                      {getSeverityIcon(finding.severity)}
+                      {/* {getSeverityIcon(finding.severity)} */}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-3 flex-wrap">
                           {getSeverityBadge(finding.severity)}
@@ -611,8 +625,14 @@ export default function Findings() {
                               CVSS {finding.cvss_score}
                             </span>
                           )}
-                          <Badge variant="secondary" className="text-xs">
+                          {/* Desktop/Tablet */}
+                          <Badge variant="secondary" className="text-xs hidden sm:inline-flex">
                             {getProjectName(finding.project_id)}
+                          </Badge>
+
+                          {/* Mobile */}
+                          <Badge variant="secondary" className="text-xs max-w-[120px] sm:hidden block">
+                            <span className="truncate block">{getProjectName(finding.project_id)}</span>
                           </Badge>
                           {findingPocs.length > 0 && (
                             <Badge variant="outline" className="text-xs">
@@ -633,8 +653,8 @@ export default function Findings() {
                       </Badge>
                       {finding.retest_status && getRetestBadge(finding.retest_status)}
                       {canDelete && (
-                        <Button 
-                          variant="ghost" 
+                        <Button
+                          variant="ghost"
                           size="icon"
                           onClick={(e) => {
                             e.stopPropagation();
@@ -693,7 +713,7 @@ export default function Findings() {
                         </Badge>
                       </div>
                     )}
-                    
+
                     {/* POC Images Section */}
                     <div>
                       <div className="flex items-center justify-between mb-2">
@@ -724,8 +744,8 @@ export default function Findings() {
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                           {findingPocs.map(poc => (
                             <div key={poc.id} className="relative group">
-                              <img 
-                                src={poc.file_path} 
+                              <img
+                                src={poc.file_path}
                                 alt={poc.file_name}
                                 className="rounded-lg border border-border/50 w-full h-32 object-cover cursor-pointer hover:opacity-80"
                                 onClick={(e) => {
@@ -819,6 +839,30 @@ export default function Findings() {
           </Card>
         )}
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!deletingFindingId} onOpenChange={(open) => !open && setDeletingFindingId(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="h-5 w-5 text-destructive" />
+              Delete Finding
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Are you sure you want to delete this finding? This action cannot be undone.
+          </p>
+          <div className="flex justify-end gap-3 mt-2">
+            <Button variant="outline" onClick={() => setDeletingFindingId(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={confirmDelete}>
+              Delete
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
     </DashboardLayout>
   );
 }
